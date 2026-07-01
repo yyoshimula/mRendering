@@ -1,0 +1,41 @@
+# ISS基本軌道プリセット, 物体なし，
+# 使用: 
+# source venv/bin/activate
+# python satellite_orbit.py --config presets/iss.yaml
+
+primary:
+  name: iss
+  model:
+    path: models/iss.glb
+    material: null
+    keep_materials: true
+  orbit:
+    altitude: 408
+    inclination: 51.6    
+    eccentricity: 0.0
+    raan: 0.0
+    arg_periapsis: 0.0
+    mean_anomaly: 0.0
+  attitude_mode: nadir
+  scale: 0.003
+
+rendering:
+  frames: 100
+  width: 640
+  height: 480
+  samples: 10
+  make_video: true
+
+camera:
+  view_mode: inertial
+
+lighting:
+  advanced_optics: true
+  show_orbit: true            # 軌跡（trajectory）線を描く（render verb のみ対応）
+  orbit_line_radius: 0.005    # 線の半径（シーン単位、地球半径=1.0）
+  orbit_line_color: [0.2, 0.6, 1.0]  # RGB
+  orbit_line_glow: 0.5        # 自発光倍率（0 で非発光）
+
+visualization:
+  show_inertial_axes: true           # 慣性座標軸（赤緑青）を描画
+  show_body_axes: true               # chief / deputy の機体軸を描画（chief: 橙黄紫、deputy: シアン マゼンタ ライム）

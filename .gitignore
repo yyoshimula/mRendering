@@ -21,7 +21,9 @@ dist/
 # IDE Settings
 .vscode/
 .idea/
+.claude/
 
 # Project Specific Output
 output/
+runs/
 *.log

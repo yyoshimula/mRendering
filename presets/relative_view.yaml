@@ -1,0 +1,36 @@
+# Case B: 軌道上 2 機を CSV から読み込み、deputy 視点で chief を注視する。
+# 使用: python mrender.py render --config presets/relative_view.yaml
+
+rendering:
+  # frames: 30
+  # 序盤 0..6000s に制限（deputy↔chief sep は 11.7–15.0 km で安定）。
+  # 後半は HCW 振動の closest approach（t≈20000s で 1.25 km）に向かい、
+  # どんなに scale を絞ってもパネルがカメラを呑み込みやすくなる。
+  duration_sec: 15000
+  start_time: 0.0
+  width: 640
+  height: 480
+  samples: 32
+
+camera:
+  view_mode: satellite          # 機載カメラ
+  view_camera_name: deputy      # deputy をカメラ位置に
+  view_target_name: chief       # chief を注視
+  fov: 40.0                     # 30° だとパネル張り出しが画角からはみ出るので少し広角に
+
+lighting:
+  advanced_optics: true
+  starfield_brightness: 0.0001
+
+# SCALE_FACTOR = 1/EARTH_RADIUS_KM ≈ 1.568e-4。
+# scene_objects.create_satellite はパネルが本体中心から ±5.5×scale 張り出すので、
+# その全幅 11×scale が deputy↔chief sep より小さくならないとカメラが内側に埋まる。
+# t=0..6000s で sep ≥ 11.7 km ≈ 0.00183 scene。安全マージン取って scale=0.0001 →
+# パネル端 ±0.00055、本体半幅 0.00015、可視角 ~32° で 40° FOV にちょうど収まる。
+objects:
+  - name: chief
+    csv_path: input/abs_chief_hcw.csv
+    scale: 0.0001
+  - name: deputy
+    csv_path: input/abs_deputy_hcw.csv
+    scale: 0.0001

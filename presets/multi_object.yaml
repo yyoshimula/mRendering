@@ -1,0 +1,30 @@
+# 複数物体の絶対軌道サンプル
+# 使用: python satellite_orbit.py --config presets/multi_object.yaml
+
+rendering:
+  frames: 90
+  width: 1280
+  height: 720
+  samples: 32
+
+camera:
+  view_mode: inertial
+
+lighting:
+  show_orbit: true
+  advanced_optics: true
+  starfield_brightness: 0.01
+
+objects:
+  - name: chief
+    csv_path: input/abs_chief_hcw.csv
+  - name: deputy
+    csv_path: input/abs_deputy_hcw.csv
+
+  - name: meo_demo
+    orbit:
+      altitude: 20200
+      inclination: 55.0
+      mean_anomaly: 90.0
+    attitude_mode: velocity_aligned
+    scale: 0.0022

@@ -1,0 +1,31 @@
+# 相対運動レンダリング: chief 静止 + deputy タンブリングプリセット
+# 使用:
+#   python mrender.py relative --config presets/relative_tumble.yaml
+#   python relative_motion.py --config presets/relative_tumble.yaml
+
+rendering:
+  frames: 90
+  fps: 30
+  width: 640
+  height: 480
+  samples: 32
+  output_dir: output/relative_tumble
+
+mode: tumble
+
+deputy:
+  rel_position: [1.8, 0.0, 0.0]
+  rel_quat:     [0.0, 0.0, 0.0, 1.0]
+
+dynamics:
+  Ix: 4.0
+  Iy: 2.0
+  Iz: 1.0
+  wx: 0.3
+  wy: 0.1
+  wz: 1.5
+
+camera:
+  camera_origin: [4.0, 2.5, 2.0]
+  camera_target: [0.8, 0.0, 0.0]
+  camera_fov: 45

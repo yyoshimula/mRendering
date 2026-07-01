@@ -1,0 +1,38 @@
+# 相対運動レンダリング: chief 固定 + deputy を CSV から再生
+# 使用:
+#   python mrender.py relative --config presets/relative_static.yaml
+#   python relative_motion.py --config presets/relative_static.yaml
+#
+# 名称「static」は「chief を慣性系で静止させる」意（地球・軌道力学なし）。
+# deputy 自体は CSV (mode: csv) で時系列再生する。
+# CSV の (x,y,z) は chief の RTN(HCW) 基底で表現された相対位置 [km]、
+#         (qx,qy,qz,qw) は chief Body → deputy Body の相対クォータニオン（scalar-last）。
+
+rendering:
+  frames: 60
+  fps: 30
+  duration_sec: 86170   # CSV 全長 (8617 行 × 10s) を 60 frames に均等配分
+  start_time: 0.0
+  width: 640
+  height: 480
+  samples: 64
+
+mode: csv
+
+csv:
+  rel_csv: input/rel_state_hcw.csv
+
+# chief は原点・恒等姿勢（既定）。書く場合は明示も可能。
+chief:
+  chief_position: [0.0, 0.0, 0.0]
+  chief_quat:     [0.0, 0.0, 0.0, 1.0]
+
+# deputy の chief に対する相対状態
+deputy:
+  rel_position: [1.5, 0.0, 0.0]
+  rel_quat:     [0.0, 0.0, 0.0, 1.0]
+
+camera:
+  camera_origin: [3.5, 2.5, 2.0]
+  camera_target: [0.5, 0.0, 0.0]
+  camera_fov: 45.0

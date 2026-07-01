@@ -1,0 +1,40 @@
+# 地球ビューティショット（テクスチャ・雲・夜光・大気・自転）
+# 使用: python satellite_orbit.py --config presets/earth_beauty.yaml
+# 注意: テクスチャファイルは各自で用意してください（NASA Blue Marble等）
+
+rendering:
+  frames: 100
+  width: 1920
+  height: 1080
+  samples: 5
+  exposure: -2.0
+  gamma: 1.0
+
+camera:
+  view_mode: inertial
+  
+earth:
+  earth_only: true
+  day_texture: assets/textures/earth_day.jpg
+  night_texture: assets/textures/earth_night.jpg
+  cloud_texture: assets/textures/earth_clouds.jpg
+  use_night_lights: true
+  use_clouds: true
+  cloud_opacity: 0.2
+  use_atmosphere: true
+  atmosphere_density: 0.01
+  atmosphere_radius_scale: 1.03
+  earth_rotation: true
+  earth_rotation_speed: 300
+
+animation:
+  duration_sec: 50
+  fps: 1
+
+lighting:
+  hdri_path: "assets/starfield.exr"
+  starfield_brightness: 1.0
+  advanced_optics: true
+  sun_rotate: true
+  sun_rotate_period: 100
+  sun_rotate_speed: 2.0

@@ -1,0 +1,36 @@
+# CSV ファイルから軌道・姿勢を読み込んでレンダリング
+# 使用: python satellite_orbit.py --config presets/csv_attitude_orbit.yaml
+
+primary:
+  name: csv_target
+  csv_path: input/attitudeOrbit.csv
+  attitude_mode: velocity_aligned   # CSV に q1..q4 列があれば自動で CSV 姿勢を使用
+  scale: 0.002
+
+rendering:
+  frames: 360
+  width: 640
+  height: 480
+  samples: 10
+  make_video: true
+  video_fps: 1
+
+camera:
+  view_mode: inertial
+
+lighting:
+  advanced_optics: true
+  sun_temperature: 5778
+  starfield_brightness: 0.01
+  show_orbit: true            # 軌跡（trajectory）線を描く（render verb のみ対応）
+  orbit_line_radius: 0.005    # 線の半径（シーン単位、地球半径=1.0）
+  orbit_line_color: [0.2, 0.6, 1.0]  # RGB
+  orbit_line_glow: 0.5        # 自発光倍率（0 で非発光）
+
+
+visualization:
+  show_inertial_axes: true           # 慣性座標軸（赤緑青）を描画
+  show_body_axes: true               # chief / deputy の機体軸を描画（chief: 橙黄紫、deputy: シアン マゼンタ ライム）
+
+animation:
+  duration_sec: 360              # シミュレーション総時間 [s]。null なら CSV 全長または軌道周期を frames に均等配分
