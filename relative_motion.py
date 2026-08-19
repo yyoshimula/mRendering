@@ -6,6 +6,12 @@ simple_rotation.py の兄弟スクリプト。
 - simple_rotation: 単機の姿勢運動だけを扱う
 - relative_motion: 2機（chief / deputy）の相対配置を扱う
 
+共有モジュール（両者で実装を 1 本化しているもの）:
+- scene_common.py  : propagate_attitude / create_axes / create_satellite /
+                     split_obj_by_parts / load_model_with_parts（Mitsuba 依存）
+- verb_parsers.py  : build_parser（Mitsuba 非依存、GUI が既定値の導出に使う）
+- config_loader.py : load_yaml_config（1 段フラット化、Mitsuba 非依存）
+
 軌道伝播・地球は一切描画しない。chief は原点に固定し、deputy を
 ユーザー指定の相対位置 r_rel と相対姿勢クォータニオン q_rel で配置する。
 
@@ -15,9 +21,14 @@ simple_rotation.py の兄弟スクリプト。
   - 位置単位 [km]（Mitsuba シーン単位とみなして直接配置。スケール感は
     モデル側の scale で調整する）
   - クォータニオン: スカラーラスト [qx, qy, qz, qw] (yoshimulib SCALAR=4)
+  - **姿勢クォータニオンの向き: q は inertial → body**（航空宇宙標準）。
+    yoshimulib の `q2dcm(q, scalar=4)` はそのまま慣性→機体の姿勢行列
+    A(q) を返す（数値検証済み: q2dcm(+90°z) @ [1,0,0] = [0,-1,0]）。
+    Mitsuba の `to_world` に必要なのは body → world なので、
+    シーン構築では常に **A(q).T** を使う（make_body_transform を参照）。
   - 角度はラジアン、角速度 rad/s、慣性モーメント kg·m²
   - rel_quat の意味: chief Body → deputy Body の相対姿勢
-    （chief が恒等のとき、そのまま deputy の慣性姿勢になる）
+    （A_dep = A_rel · A_chief。chief が恒等のとき、そのまま deputy の慣性姿勢）
 
 入力モード:
   static : 単一の (r_rel, q_rel) を全フレームへ適用（既定）
@@ -56,62 +67,32 @@ from pathlib import Path
 import sys
 from typing import List, Optional, Tuple
 import numpy as np
-from scipy.integrate import solve_ivp
-import yaml
 
 # プロジェクトルートを sys.path に追加（yoshimulib のため）
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import mitsuba as mi
 
-from yoshimulib.attitude.kinematics import q_prop_mat
 from yoshimulib.attitude.quaternion import q2dcm
 
-mi.set_variant('llvm_ad_rgb')
+from mi_variant import init_variant
+init_variant(mi)  # MRENDER_VARIANT 環境変数でバリアント切替（mi_variant.py 参照）
 
-# スカラー部の位置: 4 = scalar-last [qx, qy, qz, qw]
-# (yoshimulib の規約: scalar=4 → 4 番目要素が w)
-SCALAR = 4
-
-
-# ---------------------------------------------------------------------------
-# 姿勢動力学（simple_rotation.py と同一実装）
-# ---------------------------------------------------------------------------
-def propagate_attitude(q: np.ndarray, w: np.ndarray, I_body: np.ndarray,
-                       I_inv: np.ndarray, dt: float, substeps: int = 10) -> tuple:
-    """オイラー回転運動方程式 + クォータニオンキネマティクスで dt 分伝播。
-
-    動力学: I·ω̇ = -ω × (I·ω)        （トルクフリー、Body 系）
-    キネマ : q(t+h) = Φ(ω,h)·q(t)     （yoshimulib q_prop_mat、scalar-last）
-
-    Args:
-        q : クォータニオン [qx,qy,qz,qw] (Body→Inertial 回転)
-        w : 角速度 [rad/s] (Body 系)
-        I_body / I_inv : 慣性テンソルとその逆 [kg·m²]
-        dt : 時間刻み [s]
-        substeps : 内部サブステップ数
-
-    Returns:
-        (q_next, w_next): 更新後のクォータニオンと角速度
-    """
-    h = dt / substeps
-    t_eval = [h * i for i in range(1, substeps + 1)]
-
-    def euler_dynamics(t, w_vec):
-        # ω̇ = -I⁻¹ · (ω × I·ω)
-        return I_inv @ (-np.cross(w_vec, I_body @ w_vec))
-
-    sol = solve_ivp(euler_dynamics, [0, dt], w, method='RK45',
-                    t_eval=t_eval, rtol=1e-10, atol=1e-12)
-
-    for i in range(substeps):
-        w_i = sol.y[:, i]
-        # ω が一定な微小区間 h に対する解析的な離散伝播行列
-        Phi = q_prop_mat(SCALAR, h, w_i.reshape(1, 3))
-        q = Phi @ q
-        q = q / np.linalg.norm(q)  # 単位ノルムを再保証
-
-    return q, sol.y[:, -1]
+# 姿勢動力学・シーン構成要素は simple_rotation.py と共有（scene_common.py が
+# 唯一の実装）。ここでは後方互換のため同名で再エクスポートしている
+# （live_worker の `RM.propagate_attitude` などの参照経路を壊さないため）。
+from config_loader import load_flat_yaml_config as load_yaml_config  # noqa: E402
+from scene_common import (  # noqa: E402
+    SCALAR,
+    create_axes,
+    create_satellite,
+    inertia_matrices,
+    load_model_with_parts,
+    propagate_attitude,
+    propagate_trajectory,
+    split_obj_by_parts,
+)
+from verb_parsers import build_relative_parser as build_parser  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -123,21 +104,73 @@ def make_body_transform(position: np.ndarray, q: np.ndarray) -> mi.ScalarTransfo
     Mitsuba の 4x4 同次行列の並びは
         [ R(3x3)  t(3,) ]
         [ 0 0 0    1    ]
-    で、列ベクトル右掛け規約 world = M·local。回転行列は body→inertial の
-    DCM そのものを上 3x3 に入れ、最右列に並進 (慣性座標での衛星位置) を入れる。
+    で、列ベクトル右掛け規約 world = M·local。よって上 3x3 には
+    **body → inertial(world)** の回転行列を入れる必要がある。
+
+    q は inertial → body の姿勢クォータニオンで、yoshimulib の
+    `q2dcm(q, scalar=4)` はその姿勢行列 A(q)（= inertial → body）を返す。
+    したがって body → inertial は **A(q).T**。ここを転置せずに入れると
+    描画姿勢が真値の逆回転（鏡映的な誤り）になる。
 
     Args:
         position : 慣性座標系での衛星中心位置（シーン単位）
-        q        : クォータニオン [qx,qy,qz,qw]（body→inertial）
+        q        : クォータニオン [qx,qy,qz,qw]（inertial → body の姿勢）
 
     Returns:
-        Mitsuba ScalarTransform4f（4x4 同次変換）
+        Mitsuba ScalarTransform4f（4x4 同次変換、body → world）
     """
-    C = q2dcm(q, scalar=SCALAR)
     m = np.eye(4)
-    m[:3, :3] = C
+    m[:3, :3] = q2dcm(q, scalar=SCALAR).T  # A(q)ᵀ = body → inertial
     m[:3, 3] = np.asarray(position, dtype=float)
     return mi.ScalarTransform4f(m)
+
+
+def compose_deputy_state(chief_pos: np.ndarray, chief_q: np.ndarray,
+                         rel_pos: np.ndarray, rel_q: np.ndarray
+                         ) -> Tuple[np.ndarray, np.ndarray]:
+    """chief の慣性状態 + 相対状態 → deputy の慣性位置・姿勢クォータニオン。
+
+    バッチ (_run) と GUI ライブプレビュー (live_worker.build_scene_dict) の
+    両方がこれを呼ぶ。合成規約の実装を 1 箇所に閉じ込め、両者が乖離しない
+    ようにするための共有ヘルパー。
+
+    位置: r_dep^I = r_chief^I + A(q_chief)ᵀ · r_rel
+        rel_pos は chief の Body / RTN 系成分なので、慣性へ持ち上げるには
+        body → inertial 行列 = A(q_chief)ᵀ を掛ける（q は inertial → body）。
+
+    姿勢合成: rel_q は chief Body → deputy Body なので
+        A_dep = A_rel · A_chief
+    を満たす必要がある。yoshimulib の q_mult は
+        q2dcm(q_mult(q_a, q_b)) == q2dcm(q_a) @ q2dcm(q_b)
+    という順序なので、引数は (rel, chief) が正しい。
+    数値検証（chief=+90°z, rel=+90°x, scalar=4）:
+        A_rel @ A_chief と q2dcm(q_mult(rel, chief)) の差 = 4.9e-32
+        q_mult(chief, rel) だと差 = 2.45（不一致）
+    また q_mult の戻り値は (1,4) の 2D なので .ravel() で 1D 化する
+    （しないと下流の q2dcm(q[1]...) が IndexError になる）。
+
+    Args:
+        chief_pos : chief 慣性位置 (3,)（シーン単位）
+        chief_q   : chief 姿勢 [qx,qy,qz,qw]（inertial → chief Body、正規化済み前提）
+        rel_pos   : deputy 相対位置 (3,)（chief Body/RTN 系成分）
+        rel_q     : 相対姿勢 [qx,qy,qz,qw]（chief Body → deputy Body）
+
+    Returns:
+        (deputy_pos_inertial (3,), deputy_q_inertial (4,) [inertial → deputy Body])
+    """
+    chief_pos = np.asarray(chief_pos, dtype=float)
+    rel_pos = np.asarray(rel_pos, dtype=float)
+    C_chief_b2i = q2dcm(chief_q, scalar=SCALAR).T
+    deputy_pos_inertial = chief_pos + C_chief_b2i @ rel_pos
+
+    deputy_q_inertial = np.asarray(rel_q, dtype=float)
+    if not np.allclose(chief_q, [0.0, 0.0, 0.0, 1.0]):
+        from yoshimulib.attitude.quaternion import q_mult
+        deputy_q_inertial = np.asarray(
+            q_mult(rel_q, chief_q, scalar=SCALAR), dtype=float
+        ).ravel()
+        deputy_q_inertial = deputy_q_inertial / np.linalg.norm(deputy_q_inertial)
+    return deputy_pos_inertial, deputy_q_inertial
 
 
 # ---------------------------------------------------------------------------
@@ -238,175 +271,10 @@ def interp_csv_state(states: List[Tuple[float, np.ndarray, np.ndarray]],
 
 
 # ---------------------------------------------------------------------------
-# シーン構成要素（simple_rotation.py と同一スタイル）
+# シーン構成要素
 # ---------------------------------------------------------------------------
-def create_axes(length: float = 1.5, radius: float = 0.015,
-                prefix: str = 'inertial',
-                transform: mi.ScalarTransform4f = None,
-                colors=None, glow: float = 0.5) -> dict:
-    """座標軸を描画（cylinder + 先端 sphere）。"""
-    if transform is None:
-        transform = mi.ScalarTransform4f()
-    if colors is None:
-        colors = [
-            [1.0, 0.2, 0.2],
-            [0.2, 1.0, 0.2],
-            [0.2, 0.2, 1.0],
-        ]
-
-    objects = {}
-    directions = [('x', [1, 0, 0]), ('y', [0, 1, 0]), ('z', [0, 0, 1])]
-
-    for (name, direction), color in zip(directions, colors):
-        d = np.array(direction, dtype=float)
-        z = np.array([0, 0, 1.0])
-        if np.allclose(d, z):
-            axis_rot = mi.ScalarTransform4f()
-        elif np.allclose(d, -z):
-            axis_rot = mi.ScalarTransform4f.rotate([1, 0, 0], 180)
-        else:
-            rot_axis = np.cross(z, d)
-            rot_angle = np.degrees(np.arccos(np.clip(np.dot(z, d), -1, 1)))
-            axis_rot = mi.ScalarTransform4f.rotate(rot_axis.tolist(), rot_angle)
-
-        shaft = {
-            'type': 'cylinder',
-            'to_world': transform @ axis_rot @ mi.ScalarTransform4f.scale([radius, radius, length]),
-            'bsdf': {'type': 'diffuse', 'reflectance': {'type': 'rgb', 'value': color}},
-        }
-        if glow > 0:
-            shaft['emitter'] = {
-                'type': 'area',
-                'radiance': {'type': 'rgb', 'value': [c * glow for c in color]},
-            }
-        objects[f'{prefix}_axis_{name}'] = shaft
-
-        tip_local = d * length
-        tip_xform = transform @ mi.ScalarTransform4f.translate(tip_local.tolist())
-        tip = {
-            'type': 'sphere',
-            'to_world': tip_xform @ mi.ScalarTransform4f.scale([radius * 2.5] * 3),
-            'bsdf': {'type': 'diffuse', 'reflectance': {'type': 'rgb', 'value': color}},
-        }
-        if glow > 0:
-            tip['emitter'] = {
-                'type': 'area',
-                'radiance': {'type': 'rgb', 'value': [c * glow for c in color]},
-            }
-        objects[f'{prefix}_axis_{name}_tip'] = tip
-
-    return objects
-
-
-def create_satellite(body_transform: mi.ScalarTransform4f) -> dict:
-    """簡易プロシージャル衛星モデル（本体・パネル・アンテナ）。"""
-    objects = {}
-
-    objects['body'] = {
-        'type': 'cube',
-        'to_world': body_transform @ mi.ScalarTransform4f.scale([0.3, 0.3, 0.4]),
-        'bsdf': {
-            'type': 'roughplastic',
-            'diffuse_reflectance': {'type': 'rgb', 'value': [0.7, 0.7, 0.75]},
-            'alpha': 0.15,
-            'int_ior': 1.5,
-        }
-    }
-
-    panel_bsdf = {
-        'type': 'diffuse',
-        'reflectance': {'type': 'rgb', 'value': [0.05, 0.05, 0.2]},
-    }
-    objects['panel_left'] = {
-        'type': 'cube',
-        'to_world': body_transform
-            @ mi.ScalarTransform4f.translate([-0.7, 0, 0])
-            @ mi.ScalarTransform4f.scale([0.5, 0.02, 0.3]),
-        'bsdf': panel_bsdf,
-    }
-    objects['panel_right'] = {
-        'type': 'cube',
-        'to_world': body_transform
-            @ mi.ScalarTransform4f.translate([0.7, 0, 0])
-            @ mi.ScalarTransform4f.scale([0.5, 0.02, 0.3]),
-        'bsdf': panel_bsdf,
-    }
-
-    objects['antenna'] = {
-        'type': 'cylinder',
-        'to_world': body_transform
-            @ mi.ScalarTransform4f.translate([0, 0, 0.5])
-            @ mi.ScalarTransform4f.scale([0.05, 0.05, 0.3]),
-        'bsdf': {'type': 'conductor', 'material': 'Au'},
-    }
-
-    return objects
-
-
-def split_obj_by_parts(obj_path: str) -> dict:
-    """OBJ を 'o' ディレクティブでパーツ分割し、一時ファイルに書き出す。"""
-    import tempfile
-
-    with open(obj_path) as f:
-        lines = f.readlines()
-
-    header_lines: List[str] = []
-    parts: dict = {}
-    current_part: Optional[str] = None
-
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith('o '):
-            current_part = stripped[2:].strip()
-            parts[current_part] = []
-        elif stripped.startswith(('v ', 'vn ', 'vt ', 'mtllib ')):
-            header_lines.append(line)
-        elif stripped.startswith(('f ', 'usemtl ', 's ')):
-            if current_part is not None:
-                parts[current_part].append(line)
-            else:
-                parts.setdefault('default', []).append(line)
-
-    if not parts:
-        return {'default': obj_path}
-
-    tmp_dir = tempfile.mkdtemp(prefix='mrender_relparts_')
-    result = {}
-    for part_name, face_lines in parts.items():
-        if not face_lines:
-            continue
-        tmp_path = Path(tmp_dir) / f'{part_name}.obj'
-        with open(tmp_path, 'w') as f:
-            f.writelines(header_lines)
-            f.write(f'o {part_name}\n')
-            f.writelines(face_lines)
-        result[part_name] = str(tmp_path)
-    return result
-
-
-def load_model_with_parts(obj_path: str, part_bsdfs: dict, default_bsdf: dict,
-                          body_transform: mi.ScalarTransform4f, scale: float = 1.0,
-                          prefix: str = 'model') -> dict:
-    """OBJ をパーツ分割して読み込み、各パーツに BSDF を適用する。"""
-    fallback_bsdf = {
-        'type': 'principled',
-        'base_color': {'type': 'rgb', 'value': [0.7, 0.7, 0.7]},
-        'metallic': 0.3,
-        'roughness': 0.4,
-    }
-    transform = body_transform @ mi.ScalarTransform4f.scale([scale] * 3)
-    part_files = split_obj_by_parts(obj_path)
-
-    objects = {}
-    for part_name, part_path in part_files.items():
-        bsdf = part_bsdfs.get(part_name, default_bsdf) or fallback_bsdf
-        objects[f'{prefix}_part_{part_name}'] = {
-            'type': 'obj',
-            'filename': part_path,
-            'to_world': transform,
-            'bsdf': bsdf,
-        }
-    return objects
+# create_axes / create_satellite / split_obj_by_parts / load_model_with_parts は
+# scene_common.py に一本化済み（モジュール冒頭で再エクスポート）。
 
 
 def add_object(objects: dict, body_transform: mi.ScalarTransform4f,
@@ -427,6 +295,34 @@ def add_object(objects: dict, body_transform: mi.ScalarTransform4f,
 # ---------------------------------------------------------------------------
 # シーン構築
 # ---------------------------------------------------------------------------
+def create_earth_backdrop(chief_pos, direction, altitude_km: float,
+                          texture: str, rotation_deg: float = 0.0) -> dict:
+    """chief 近傍シーン（km 単位）に地球球体を背景として置く。
+
+    シーン座標は chief 中心の RTN(Hill) frame 想定なので、`direction` に
+    [0,0,-1]（-N 方向 = 地心方向）などを与えると chief の高度 `altitude_km`
+    に対応する位置へ地球（半径 R_EARTH_KM の解析球）が置かれる。
+    パストレーシングにより地球アルベド（earthshine）の照り返しも自動で乗る。
+    """
+    from yoshimulib.orbit.orbital_elements import R_EARTH_KM
+    d = np.asarray(direction, dtype=float)
+    d = d / np.linalg.norm(d)
+    center = np.asarray(chief_pos, dtype=float) + d * (R_EARTH_KM + altitude_km)
+    to_world = (mi.ScalarTransform4f.translate(center.tolist())
+                @ mi.ScalarTransform4f.rotate([0, 0, 1], rotation_deg)
+                @ mi.ScalarTransform4f.scale([R_EARTH_KM] * 3))
+    return {
+        'earth': {
+            'type': 'sphere',
+            'to_world': to_world,
+            'bsdf': {
+                'type': 'diffuse',
+                'reflectance': {'type': 'bitmap', 'filename': texture},
+            },
+        },
+    }
+
+
 def build_scene(chief_xform: mi.ScalarTransform4f,
                 deputy_xform: mi.ScalarTransform4f,
                 *, width: int, height: int, samples: int,
@@ -435,18 +331,34 @@ def build_scene(chief_xform: mi.ScalarTransform4f,
                 deputy_model: Optional[str], deputy_parts: Optional[dict],
                 deputy_default_bsdf: Optional[dict], deputy_scale: float,
                 camera_origin, camera_target, camera_fov: float,
-                show_inertial_axes: bool, show_body_axes: bool) -> dict:
+                show_inertial_axes: bool, show_body_axes: bool,
+                camera_up=(0.0, 1.0, 0.0), max_depth: int = 8,
+                sun_direction=(1.0, -1.0, -0.5),
+                sun_rgb=(5.0, 5.0, 4.8),
+                env_dict: Optional[dict] = None,
+                earth_dict: Optional[dict] = None,
+                hide_chief: bool = False) -> dict:
     """Mitsuba シーン辞書を組み立てる。"""
+    if env_dict is None:
+        env_dict = {
+            'type': 'constant',
+            'radiance': {'type': 'rgb', 'value': [0.02, 0.02, 0.03]},
+        }
     scene_dict = {
         'type': 'scene',
-        'integrator': {'type': 'path', 'max_depth': 8},
+        'integrator': {'type': 'path', 'max_depth': max_depth},
         'camera': {
             'type': 'perspective',
             'fov': camera_fov,
+            # シーン単位は km。Mitsuba 既定の near_clip=0.01 は 10 m 相当で、
+            # 近接撮像（数 m〜数十 m）のターゲットを丸ごと切り落としてしまう。
+            # near を 1e-5 km (= 1 cm)、far を 1e6 km（地球背景を十分含む）に広げる。
+            'near_clip': 1e-5,
+            'far_clip': 1e6,
             'to_world': mi.ScalarTransform4f.look_at(
                 origin=camera_origin,
                 target=camera_target,
-                up=[0, 1, 0],
+                up=list(camera_up),
             ),
             'film': {
                 'type': 'hdrfilm',
@@ -458,14 +370,14 @@ def build_scene(chief_xform: mi.ScalarTransform4f,
         },
         'sun': {
             'type': 'directional',
-            'direction': [1, -1, -0.5],
-            'irradiance': {'type': 'rgb', 'value': [5, 5, 4.8]},
+            'direction': list(sun_direction),
+            'irradiance': {'type': 'rgb', 'value': list(sun_rgb)},
         },
-        'envmap': {
-            'type': 'constant',
-            'radiance': {'type': 'rgb', 'value': [0.02, 0.02, 0.03]},
-        },
+        'envmap': env_dict,
     }
+
+    if earth_dict:
+        scene_dict.update(earth_dict)
 
     if show_inertial_axes:
         scene_dict.update(create_axes(prefix='inertial', glow=0.5))
@@ -486,9 +398,10 @@ def build_scene(chief_xform: mi.ScalarTransform4f,
             glow=0.8,
         ))
 
-    add_object(scene_dict, chief_xform,
-               model_path=chief_model, part_bsdfs=chief_parts,
-               default_bsdf=chief_default_bsdf, scale=chief_scale, prefix='chief')
+    if not hide_chief:
+        add_object(scene_dict, chief_xform,
+                   model_path=chief_model, part_bsdfs=chief_parts,
+                   default_bsdf=chief_default_bsdf, scale=chief_scale, prefix='chief')
     add_object(scene_dict, deputy_xform,
                model_path=deputy_model, part_bsdfs=deputy_parts,
                default_bsdf=deputy_default_bsdf, scale=deputy_scale, prefix='deputy')
@@ -497,125 +410,11 @@ def build_scene(chief_xform: mi.ScalarTransform4f,
 
 
 # ---------------------------------------------------------------------------
-# YAML 読み込み（simple_rotation.py と同じ 1 段フラット化）
+# YAML 読み込み・パーサ（mrender verb / GUI から再利用するため分離）
 # ---------------------------------------------------------------------------
-def load_yaml_config(paths: List[str]) -> dict:
-    merged: dict = {}
-    for path in paths:
-        with open(path) as f:
-            data = yaml.safe_load(f)
-        if data is None:
-            continue
-        for key, val in data.items():
-            if isinstance(val, dict):
-                for k, v in val.items():
-                    merged[k.replace('-', '_')] = v
-            else:
-                merged[key.replace('-', '_')] = val
-    return merged
-
-
-# ---------------------------------------------------------------------------
-# パーサ・実行ロジックの分離（mrender verb から再利用するため）
-# ---------------------------------------------------------------------------
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description='相対位置・相対姿勢を直接与えて 2 機をレンダリング（軌道力学なし）',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-例:
-  # mrender 経由（推奨、runs/ に自動配置）
-  python mrender.py relative --config presets/relative_static.yaml
-
-  # 静止配置
-  python relative_motion.py --frames 30 --rel-position 1.5 0 0
-
-  # CSV駆動（time_s, x, y, z, qx, qy, qz, qw）
-  python relative_motion.py --mode csv --rel-csv input/rel_state_sample.csv
-
-  # deputy をタンブリング
-  python relative_motion.py --mode tumble --rel-position 1.5 0 0 \\
-      --wx 0.3 --wy 0.1 --wz 1.0
-        """,
-    )
-    parser.add_argument('--config', nargs='+', default=[],
-                        help='YAMLプリセットファイル（複数指定可、後のファイルが優先）')
-
-    # レンダリング
-    parser.add_argument('--frames', type=int, default=30, help='フレーム数')
-    parser.add_argument('--fps', type=float, default=30.0, help='フレームレート [fps]')
-    parser.add_argument('--samples', type=int, default=128, help='サンプル数/ピクセル')
-    parser.add_argument('--width', type=int, default=640, help='画像幅')
-    parser.add_argument('--height', type=int, default=480, help='画像高さ')
-    parser.add_argument('--output-dir', type=str, default=None,
-                        help='出力ディレクトリ（未指定時は output/relative）')
-    parser.add_argument('--duration-sec', type=float, default=None,
-                        help='シミュレートする総時間 [s]。指定時は dt = duration_sec / frames で frames を均等配分する。'
-                             '未指定時は dt = 1/fps（実時間 1:1）。')
-    parser.add_argument('--start-time', type=float, default=0.0,
-                        help='シミュレーション開始時刻 [s]（CSV 駆動時の参照開始点）')
-
-    # モード
-    parser.add_argument('--mode', choices=['static', 'csv', 'tumble'], default='static',
-                        help='相対状態の与え方')
-
-    # 相対位置・相対姿勢（static / tumble の初期値）
-    parser.add_argument('--rel-position', nargs=3, type=float, default=[1.5, 0.0, 0.0],
-                        help='deputy の chief に対する相対位置 [x y z]（シーン単位）')
-    parser.add_argument('--rel-quat', nargs=4, type=float, default=[0.0, 0.0, 0.0, 1.0],
-                        help='deputy の chief に対する相対クォータニオン [qx qy qz qw]')
-
-    # chief 配置（通常は原点・恒等）
-    parser.add_argument('--chief-position', nargs=3, type=float, default=[0.0, 0.0, 0.0],
-                        help='chief 位置 [x y z]')
-    parser.add_argument('--chief-quat', nargs=4, type=float, default=[0.0, 0.0, 0.0, 1.0],
-                        help='chief クォータニオン [qx qy qz qw]')
-
-    # CSV モード
-    parser.add_argument('--rel-csv', type=str, default=None,
-                        help='相対状態 CSV: time_s,x,y,z,qx,qy,qz,qw')
-
-    # tumble モード（オイラー回転動力学パラメータ）
-    parser.add_argument('--Ix', type=float, default=4.0, help='慣性モーメント Ix [kg·m²]')
-    parser.add_argument('--Iy', type=float, default=2.0, help='慣性モーメント Iy [kg·m²]')
-    parser.add_argument('--Iz', type=float, default=1.0, help='慣性モーメント Iz [kg·m²]')
-    parser.add_argument('--wx', type=float, default=0.3, help='初期角速度 ωx [rad/s]')
-    parser.add_argument('--wy', type=float, default=0.1, help='初期角速度 ωy [rad/s]')
-    parser.add_argument('--wz', type=float, default=1.0, help='初期角速度 ωz [rad/s]')
-
-    # モデル（chief / deputy 共通の OBJ + パーツ別 BSDF）
-    parser.add_argument('--chief-model', type=str, default=None,
-                        help='chief OBJ モデルパス')
-    parser.add_argument('--chief-scale', type=float, default=1.0)
-    parser.add_argument('--deputy-model', type=str, default=None,
-                        help='deputy OBJ モデルパス')
-    parser.add_argument('--deputy-scale', type=float, default=1.0)
-
-    # カメラ
-    parser.add_argument('--camera-origin', nargs=3, type=float, default=[3.5, 2.5, 2.0],
-                        help='カメラ位置 [x y z]')
-    parser.add_argument('--camera-target', nargs=3, type=float, default=[0.5, 0.0, 0.0],
-                        help='カメラ注視点 [x y z]')
-    parser.add_argument('--camera-fov', type=float, default=45.0, help='視野角 [deg]')
-
-    # 動画化
-    parser.add_argument('--make-video', action='store_true', default=False,
-                        help='レンダ後に ffmpeg で動画化する')
-    parser.add_argument('--video-fps', type=float, default=None,
-                        help='動画 fps（未指定時はレンダリング fps を使用）')
-    parser.add_argument('--video-name', type=str, default='output.mp4',
-                        help='動画ファイル名（run ディレクトリ直下に出力）')
-
-    # 軸の表示
-    parser.add_argument('--show-inertial-axes', action='store_true', default=True,
-                        help='慣性軸を描画する（既定: 有効）')
-    parser.add_argument('--no-inertial-axes', dest='show_inertial_axes',
-                        action='store_false')
-    parser.add_argument('--show-body-axes', action='store_true', default=True,
-                        help='機体軸を描画する（既定: 有効）')
-    parser.add_argument('--no-body-axes', dest='show_body_axes', action='store_false')
-
-    return parser
+# load_yaml_config = config_loader.load_flat_yaml_config（1 段フラット化）
+# build_parser     = verb_parsers.build_relative_parser（Mitsuba 非依存）
+# どちらもモジュール冒頭で import 済み。ここでは公開名を保つためだけの節。
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -633,6 +432,63 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def build_environment(args: argparse.Namespace, chief_pos: np.ndarray
+                      ) -> Tuple[list, Optional[dict], Optional[dict]]:
+    """太陽色・環境光・地球背景を組み立てて (sun_rgb, env_dict, earth_dict) を返す。
+
+    これらはフレーム間で不変なので、バッチ (`_run`) は 1 度だけ呼ぶ。
+    GUI ライブプレビュー (live_worker.build_scene_dict) も同じ関数を呼ぶことで、
+    式の複製を無くしバッチとライブの画が乖離しないようにしている。
+
+    規則:
+      - sun_temperature 指定時は黒体放射色を最大成分で正規化し irradiance 倍。
+        未指定なら従来互換の淡い暖色 [1, 1, 0.96] × irradiance。
+      - starfield 指定時は envmap（scale = env_brightness、既定 1.0）。
+        starfield 無しで env_brightness 指定なら定数環境光 [b, b, 1.2b]。
+        どちらも無ければ None を返し、build_scene 側の既定（淡い暗色）に任せる。
+      - show_earth 指定時のみ地球背景の解析球を作る。
+
+    Args:
+        args      : relative verb の argparse Namespace
+        chief_pos : chief の慣性位置（地球球体の配置基準、シーン単位 km）
+
+    Returns:
+        (sun_rgb, env_dict, earth_dict)
+    """
+    sun_irr = float(args.sun_irradiance)
+    sun_temp = args.sun_temperature
+    if sun_temp:
+        from optical_lighting import blackbody_to_rgb
+        rgb = blackbody_to_rgb(float(sun_temp))
+        rgb = rgb / max(float(np.max(rgb)), 1e-9)
+        sun_rgb = (rgb * sun_irr).tolist()
+    else:
+        # 従来互換: 淡い暖色 [5,5,4.8] を irradiance でスケール
+        sun_rgb = [sun_irr, sun_irr, sun_irr * 0.96]
+
+    env_brightness = args.env_brightness
+    starfield = args.starfield
+    if starfield:
+        env_dict = {'type': 'envmap', 'filename': str(starfield),
+                    'scale': float(env_brightness if env_brightness is not None else 1.0)}
+    elif env_brightness is not None:
+        b = float(env_brightness)
+        env_dict = {'type': 'constant', 'radiance': {'type': 'rgb', 'value': [b, b, b * 1.2]}}
+    else:
+        env_dict = None  # build_scene 側の従来デフォルト
+
+    earth_dict = None
+    if args.show_earth:
+        earth_dict = create_earth_backdrop(
+            chief_pos,
+            args.earth_direction,
+            float(args.earth_altitude_km),
+            str(args.earth_texture),
+            float(args.earth_rotation_deg),
+        )
+    return sun_rgb, env_dict, earth_dict
+
+
 def _run(args: argparse.Namespace) -> None:
     """argparse Namespace を受け取り、シーンを連番でレンダする。
 
@@ -642,20 +498,22 @@ def _run(args: argparse.Namespace) -> None:
          - csv   : 時刻 t を CSV 補間
          - tumble: rel_pos 固定、rel_q は前フレームから姿勢動力学で進める
       ② chief 姿勢で rel_pos を慣性座標に持ち上げる:
-            r_dep^I = r_chief^I + R(q_chief) · r_rel
+            r_dep^I = r_chief^I + A(q_chief)ᵀ · r_rel
+         （q は inertial → body なので body → inertial は転置）
          q_dep^I は chief 恒等なら rel_q そのまま、そうでなければ
-         q_chief * q_rel をクォータニオン積で合成
+         A_dep = A_rel · A_chief となるよう q_mult(rel_q, chief_q) で合成
       ③ Mitsuba シーン辞書を組み立てて mi.render() → PNG 保存
       ④ tumble の場合のみ q_dep, w_dep を propagate_attitude で次フレームへ
     """
     output_dir = Path(args.output_dir or 'output/relative')
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # YAML 経由で渡る dict 系（chief_parts 等）は getattr で拾う
-    chief_parts = getattr(args, 'chief_parts', None) or getattr(args, 'chief_model_parts', None)
-    chief_default_bsdf = getattr(args, 'chief_bsdf', None) or getattr(args, 'chief_model_bsdf', None)
-    deputy_parts = getattr(args, 'deputy_parts', None) or getattr(args, 'deputy_model_parts', None)
-    deputy_default_bsdf = getattr(args, 'deputy_bsdf', None) or getattr(args, 'deputy_model_bsdf', None)
+    # dict 系（chief_parts / *_bsdf）は argparse に dest が無く YAML からしか
+    # 来ないので getattr で拾う。それ以外は登録済み dest なので直接参照する。
+    chief_parts = getattr(args, 'chief_parts', None)
+    chief_default_bsdf = getattr(args, 'chief_bsdf', None)
+    deputy_parts = getattr(args, 'deputy_parts', None)
+    deputy_default_bsdf = getattr(args, 'deputy_bsdf', None)
 
     # chief 姿勢（全フレームで固定）
     chief_pos = np.asarray(args.chief_position, dtype=float)
@@ -678,13 +536,15 @@ def _run(args: argparse.Namespace) -> None:
         dt = args.duration_sec / args.frames
     else:
         dt = 1.0 / args.fps if args.fps > 0 else 1.0
-    start_t = float(getattr(args, 'start_time', 0.0) or 0.0)
+    start_t = float(args.start_time or 0.0)
 
     # tumble モード用の初期状態
     q_dep = rel_q_init.copy()
     w_dep = np.array([args.wx, args.wy, args.wz], dtype=float)
-    I_body = np.diag([args.Ix, args.Iy, args.Iz])
-    I_inv = np.diag([1.0 / args.Ix, 1.0 / args.Iy, 1.0 / args.Iz])
+    I_body, I_inv = inertia_matrices(args.Ix, args.Iy, args.Iz)
+
+    # --- 宇宙環境（太陽色・環境光・地球背景）はフレーム間で不変なので先に構築 ---
+    sun_rgb, env_dict, earth_dict = build_environment(args, chief_pos)
 
     print('相対運動レンダリング')
     print(f"  モード: {args.mode}")
@@ -720,18 +580,10 @@ def _run(args: argparse.Namespace) -> None:
             rel_pos = rel_pos_init
             rel_q = q_dep
 
-        # deputy の慣性座標は: r_dep^I = r_chief^I + R(q_chief) · r_rel
-        # （rel_pos は chief の Body / RTN 系成分、R で慣性へ持ち上げる）
-        C_chief = q2dcm(chief_q, scalar=SCALAR)
-        deputy_pos_inertial = chief_pos + C_chief @ rel_pos
-        # 姿勢合成: q_dep^I = q_chief ⊗ q_rel
-        # chief が恒等回転なら rel_q がそのまま deputy の慣性姿勢になる
-        # （ショートカット: 厳密合成が必要なら yoshimulib.q_mult を使う）
-        deputy_q_inertial = rel_q
-        if not np.allclose(chief_q, [0.0, 0.0, 0.0, 1.0]):
-            from yoshimulib.attitude.quaternion import q_mult
-            deputy_q_inertial = q_mult(chief_q, rel_q, scalar=SCALAR)
-            deputy_q_inertial = deputy_q_inertial / np.linalg.norm(deputy_q_inertial)
+        # deputy の慣性位置・姿勢を合成（規約・数値検証は compose_deputy_state
+        # の docstring 参照。live_worker と共有し実装を 1 箇所に閉じ込める）。
+        deputy_pos_inertial, deputy_q_inertial = compose_deputy_state(
+            chief_pos, chief_q, rel_pos, rel_q)
 
         deputy_xform = make_body_transform(deputy_pos_inertial, deputy_q_inertial)
 
@@ -746,8 +598,20 @@ def _run(args: argparse.Namespace) -> None:
             camera_fov=args.camera_fov,
             show_inertial_axes=args.show_inertial_axes,
             show_body_axes=args.show_body_axes,
+            camera_up=args.camera_up,
+            max_depth=int(args.max_depth),
+            sun_direction=args.sun_direction,
+            sun_rgb=sun_rgb,
+            env_dict=env_dict,
+            earth_dict=earth_dict,
+            hide_chief=bool(args.hide_chief),
         )
-        scene = mi.load_dict(scene_dict)
+        # テクスチャ/星空 EXR の毎フレーム再デコードを避ける
+        # （BSDF テクスチャは実体共有、envmap 等は Bitmap キャッシュ。
+        #  live_worker のリファインパスと同一経路になり、ライブ⇔バッチの
+        #  ピクセル一致が構成上保証される）
+        from asset_cache import preload_bitmaps, share_bsdf_textures
+        scene = mi.load_dict(preload_bitmaps(share_bsdf_textures(scene_dict)))
         image = mi.render(scene)
 
         output_path = output_dir / f'frame_{frame:04d}.png'

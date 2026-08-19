@@ -36,6 +36,19 @@ def run(args: argparse.Namespace, run_dir: RunDir | None = None) -> RunDir:
         _run_relative(args)
         extra['frame_count'] = int(getattr(args, 'frames', 0))
         extra['frames_dir'] = str(run_dir.frames_dir)
+
+        # 動画化は manifest 書き込み（finally）より前に済ませる。
+        # 後回しにすると 'video' キーが manifest に載らない。
+        if getattr(args, 'make_video', False):
+            # `--video-fps` 優先、それが無ければ `--fps`、最後に 30 fps をデフォルト。
+            video_path = maybe_make_video(
+                run_dir.frames_dir,
+                fps=float(getattr(args, 'video_fps', None) or getattr(args, 'fps', 30.0) or 30.0),
+                output_name=str(getattr(args, 'video_name', 'output.mp4') or 'output.mp4'),
+                enabled=True,
+            )
+            if video_path is not None:
+                extra['video'] = str(video_path)
     except Exception as exc:  # noqa: BLE001
         status = f'error: {exc!r}'
         raise
@@ -44,17 +57,6 @@ def run(args: argparse.Namespace, run_dir: RunDir | None = None) -> RunDir:
             run_dir.write_manifest(args, finished_at=datetime.now(), status=status, extra=extra)
         else:
             run_dir.manifest_extra.setdefault('relative', {}).update(extra)
-
-    if getattr(args, 'make_video', False):
-        # `--video-fps` 優先、それが無ければ `--fps`、最後に 30 fps をデフォルト。
-        video_path = maybe_make_video(
-            run_dir.frames_dir,
-            fps=float(getattr(args, 'video_fps', None) or getattr(args, 'fps', 30.0) or 30.0),
-            output_name=str(getattr(args, 'video_name', 'output.mp4') or 'output.mp4'),
-            enabled=True,
-        )
-        if video_path is not None:
-            extra['video'] = str(video_path)
 
     print(f'\nランディレクトリ: {run_dir.path}')
     return run_dir

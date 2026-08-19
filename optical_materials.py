@@ -10,9 +10,6 @@ Mitsuba 3 の BSDF (Bidirectional Scattering Distribution Function) 辞書とし
                       強い吸収を表す）から Fresnel 方程式で反射率を計算。
   - roughconductor  : マイクロファセット理論（GGX 等）に基づく粗面金属。`alpha` は
                       表面の RMS 粗さに対応（大きいほど鏡面が広がる）。
-  - dielectric      : 誘電体の鏡面反射＋透過。`int_ior`/`ext_ior` は内部/外部の
-                      実屈折率比で Snell 則と Fresnel 反射率を与える。
-  - roughdielectric : マイクロファセット粗面誘電体（曇りガラス等）。
   - plastic / roughplastic : 拡散層 + 鏡面層の合成。塗装面・コーティング面の近似。
   - diffuse         : Lambert 拡散（cosθ 則）。一様反射する理想拡散面。
 
@@ -26,8 +23,7 @@ Mitsuba 3 の BSDF (Bidirectional Scattering Distribution Function) 辞書とし
 使用側: scene_builder.py / satellite_orbit.py 等で衛星パーツに割り当てる。
 """
 
-from typing import Dict, Any, Optional
-import numpy as np
+from typing import Dict, Any
 
 
 class SpaceMaterial:
@@ -239,39 +235,6 @@ def create_kapton_mli_bsdf() -> Dict[str, Any]:
     }
 
 
-def create_glass_bsdf(ior: float = 1.5, roughness: float = 0.0) -> Dict[str, Any]:
-    """
-    ガラス（カメラレンズ、窓）のBSDFを作成
-
-    誘電体は Snell 則による屈折と Fresnel 反射の両方を持つ。Mitsuba では:
-      - int_ior: 媒質内側の屈折率（ガラス側）
-      - ext_ior: 媒質外側の屈折率（宇宙空間 ≈ 1.0）
-      - alpha: 粗面誘電体のマイクロファセット幅（曇りガラス）
-
-    Args:
-        ior: 屈折率（典型: ガラス 1.5、サファイア 1.77）
-        roughness: 表面粗さ (0.0-1.0)
-
-    Returns:
-        Mitsuba BSDF辞書
-    """
-    if roughness < 0.01:
-        # 滑らかなガラス: Fresnel 反射 + 屈折透過
-        return {
-            'type': 'dielectric',
-            'int_ior': ior,
-            'ext_ior': 1.0,  # 真空
-        }
-    else:
-        # 粗いガラス: マイクロファセットによる散乱が加わる
-        return {
-            'type': 'roughdielectric',
-            'int_ior': ior,
-            'ext_ior': 1.0,
-            'alpha': roughness,
-        }
-
-
 def create_carbon_composite_bsdf(roughness: float = 0.3) -> Dict[str, Any]:
     """
     カーボンコンポジット（CFRP）のBSDFを作成
@@ -297,63 +260,10 @@ def create_carbon_composite_bsdf(roughness: float = 0.3) -> Dict[str, Any]:
     }
 
 
-def create_beta_cloth_bsdf() -> Dict[str, Any]:
-    """
-    ベータクロス（耐熱繊維）のBSDFを作成
-
-    ガラス繊維にテフロンコートした白色の耐熱布。EVA グローブや MLI 最外層に
-    使われる。ほぼ完全拡散の白として近似。
-
-    Returns:
-        Mitsuba BSDF辞書
-    """
-    return {
-        'type': 'diffuse',
-        'reflectance': {
-            'type': 'rgb',
-            'value': [0.85, 0.85, 0.82]
-        }
-    }
-
-
-def create_earth_bsdf(texture_path: Optional[str] = None, albedo: float = 0.3) -> Dict[str, Any]:
-    """
-    地球表面のBSDFを作成
-
-    地球を Lambert 拡散とみなし、テクスチャがあれば bitmap、なければ
-    アルベドに比例した RGB 一色（青系の海色）を割り当てる。
-    平均アルベド 0.3（Bond アルベド）を基準にスケール。
-
-    Args:
-        texture_path: テクスチャ画像のパス（equirectangular 投影 PNG/JPG）
-        albedo: アルベド（反射率、0.3 が地球平均値）
-
-    Returns:
-        Mitsuba BSDF辞書
-    """
-    bsdf = {
-        'type': 'diffuse'
-    }
-
-    if texture_path:
-        bsdf['reflectance'] = {
-            'type': 'bitmap',
-            'filename': texture_path
-        }
-    else:
-        # デフォルトの地球色（海洋主体の青）
-        bsdf['reflectance'] = {
-            'type': 'rgb',
-            'value': [0.15 * albedo / 0.3, 0.35 * albedo / 0.3, 0.65 * albedo / 0.3]
-        }
-
-    return bsdf
-
-
 class MaterialLibrary:
     """材質ライブラリ
 
-    宇宙機の典型的なパーツ（本体、アンテナ、太陽電池、MLI、ラジエーター、レンズ）
+    宇宙機の典型的なパーツ（本体、アンテナ、太陽電池、MLI、ラジエーター）
     に対する BSDF をセマンティック名で取得するファクトリ。
     シーン構築コードから材質詳細を隠蔽する役割。
     """
@@ -399,34 +309,6 @@ class MaterialLibrary:
     def get_radiator_material() -> Dict[str, Any]:
         """ラジエーター（黒色）の材質"""
         return create_black_paint_bsdf()
-
-    @staticmethod
-    def get_camera_lens_material(ior: float = 1.5) -> Dict[str, Any]:
-        """カメラレンズの材質"""
-        return create_glass_bsdf(ior, roughness=0.0)
-
-
-def get_material_info(material_name: str) -> str:
-    """
-    材質の説明を取得
-
-    Args:
-        material_name: 材質名
-
-    Returns:
-        材質の説明文
-    """
-    info = {
-        'aluminum': 'アルミニウム合金 - 衛星構造材として最も一般的。軽量で加工性が良い。',
-        'gold': '金 - 電磁波反射、熱制御、腐食防止に使用。アンテナやMLIに使用。',
-        'solar_panel': '太陽電池パネル - シリコンセル。光を吸収し電力に変換するため暗色。',
-        'white_paint': '白色塗料 - 熱制御用。太陽光を反射し温度上昇を抑える。',
-        'black_paint': '黒色塗料 - ラジエーター用。熱を効率的に放射。',
-        'kapton_mli': 'カプトンMLI - 多層断熱材。金色の薄膜を多層化して真空断熱。',
-        'carbon_composite': 'カーボンコンポジット - CFRP。軽量高強度構造材。',
-        'beta_cloth': 'ベータクロス - 耐熱繊維。白色で熱反射性が高い。',
-    }
-    return info.get(material_name, '情報なし')
 
 
 if __name__ == "__main__":

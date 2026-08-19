@@ -17,25 +17,110 @@ pip install -r requirements.txt
 pip install -r yoshimulib/requirements.txt
 ```
 
+### 実行（GUI）
+
+```bash
+# ブラウザ GUI を起動（http://127.0.0.1:8600、Flask 不要・標準ライブラリのみ）
+python mrender.py gui
+python mrender.py gui --port 8765 --no-browser
+```
+
+**リモート実行（DGX Spark）**: 2 方式ある（詳細は
+[tools/dgx/README.md](tools/dgx/README.md)）。
+① **GUI 内マシン選択（推奨）**: GUI を Mac で動かし、ヘッダーの「実行マシン」
+セレクタでジョブ・ライブプレビューごとに local / dgx を切替。リモート定義は
+`gui_hosts.json`（ssh ホスト名 / リポジトリ dir / MRENDER_VARIANT。自ホスト名と
+同名エントリは自動除外）。リモートジョブは YAML を scp → `ssh -tt` で実行し、
+runs/<run> を rsync でローカルへ自動ミラー（進捗・最新フレーム・成果物リンクは
+ローカル実行と同一 UI、最終同期中は status=syncing）。ライブプレビュー worker は
+`ssh -L`（リモート側ポートは +100 オフセット）で常駐し、プロキシ経路は不変。
+事前に `tools/dgx/sync_to_dgx.sh` でコード同期が必要。
+② **GUI ごと DGX で動かす**: `tools/dgx/connect_dgx.sh`（tmux 常駐 + SSH トンネル
+8600 1 本 + ブラウザ起動）。
+Mitsuba バリアントは `MRENDER_VARIANT` 環境変数（カンマ区切り先勝ち、既定
+`llvm_ad_rgb`、実装 `mi_variant.py`）で切り替え、DGX では
+`cuda_ad_rgb,llvm_ad_rgb`（GPU 優先・CPU フォールバック）を既定にする。
+
+GUI（`gui_server.py` + `gui/index.html`）は verb 選択・プリセット読込・フォーム編集・
+YAML プレビュー・プリセット保存・レンダリング開始・進捗/最新フレーム表示・過去ラン
+（runs/）一覧までを提供する。ジョブは `runs/_gui_configs/` に YAML を書き出し、
+`mrender.py <verb> --config <yaml>` をサブプロセス起動する（output_dir 明示指定で
+ランディレクトリを事前確定し、frames/*.png のカウントで進捗率を出す）。
+GUI サーバーは Mitsuba を import しない軽量設計。relative/rotation の
+フォームデフォルト値は `verb_parsers.py`（Mitsuba 非依存のパーサ定義）から
+`parse_args([])` で自動導出するため、argparse 定義の変更に自動追従する
+（旧ハードコード辞書は廃止済み）。プリセットのフォーム未対応キーは
+extraKeys 機構でそのまま透過適用される（フォーム下部に一覧表示）。
+
+**ライブプレビュー（全 verb 対応）**: 右カラムの「ライブプレビュー ON」で
+Blender のレンダープレビュー風のビューポートが使える。
+Mitsuba 常駐の `live_worker.py` を gui_server が遅延 spawn（既定ポート =
+GUI ポート+1、`--live-port` で変更、ログは `runs/_gui_configs/live_worker.log`）し、
+`/api/live/update|frame|status|stop` をプロキシする。フォーム変更は 200ms
+デバウンスで再レンダ（~0.3s、480×360/spp4 相当）、アイドル時にフル解像度で
+自動リファイン。ビューポート操作: 左ドラッグ=オービット / ホイール=ドリー /
+Shift+ドラッグ=パン（結果は camera_origin/target フォーム欄へ書き戻し =
+フォームが単一の真実源）。タイムラインスライダーで tumble/csv の姿勢を
+スクラブ（軌跡は worker 側で事前計算キャッシュ）。太陽ウィジェットは verb 別:
+relative=方位/仰角⇄sun_direction、render 系=sun_angle スライダー（空欄=天文学的
+自動計算、sun_rotate ON 時は無効）、rotation=非表示。
+verb 別のシーン再現: relative は `relative_motion.py`、rotation は
+`simple_rotation.py`、render/preview/onboard/lightcurve は `satellite_orbit.py`
+のフレームロジック（トーンマップ経路 apply_tonemap + srgb_gamma=False 含む）を
+再利用しており、リファイン画像は各 verb の本番出力とピクセル一致
+（render 系はビット一致、relative/rotation は Mitsuba 自体の ±1LSB 揺らぎのみ）。
+render 系のカメラ操作は view_mode が解決した実カメラ（/api/live/status の
+camera）をシードに camera_origin/target オーバーライド欄へ書き戻す。
+lightcurve のライブ表示はシーン画像のみ（CSV は本番実行で出力）。
+プレビュー高速化: GLB→OBJ 変換・OBJ パーツ分割・mi.Bitmap を (path,mtime)
+キャッシュ、プレビューパスのみ envmap/大型テクスチャを 2048px にダウンサンプル
+（`PREVIEW_ENV_MAX_WIDTH`、リファインは原寸）。ロード済み Emitter 等の
+シーンオブジェクト共有は画が壊れるため禁止（Bitmap 共有は安全）。
+**操作中の簡易描画**: ドラッグ/ホイール/タイムラインスクラブ・再生中は
+`quality.interactive: true` が送られ、worker が簡易化プロファイル
+（大気・雲・夜光・starfield を一時オフ、integrator を path/max_depth=2 に
+差し替え、解像度さらに 1/2・spp≤2。`simplify_fields` / `simplify_scene`）で
+~0.1-0.2 s 応答にする。手を離すと通常品質 1 発 → 自動リファイン
+（リファインは常にフル品質で、簡易化は漏れない — ビット一致検証済み）。
+ステータス行に「簡易」バッジ（`X-Live-Simplified` ヘッダ、gui_server の
+_LIVE_HEADERS 許可リストに登録済み）。「簡易操作」チェックで無効化可。
+注意: 各 verb の argparse（verb_parsers.py）を変えると live_worker・GUI とも
+`build_parser().parse_args([])` 由来なので自動追従する。
+既知の微小差: relative の starfield envmap の最輝星 数 px が live⇔バッチ間で
+≤ 十数 LSB ずれることがある（Bitmap キャッシュ経路由来。ターゲット・地球は
+ビット一致）。
+
+**AI アシスタント drawer（全 verb 共通）**: ヘッダーの「🤖 AI」で右ドロワーが開く。
+バックエンドはローカルの `claude` CLI（Claude 系）/ `cursor-agent`（Grok 系）を
+ヘッドレス起動して stream-json を SSE 中継する monet（llmWiki）方式。API キー不要。
+`POST /api/ai`（prompt / session_id / model / effort / gui_context）、
+`POST /api/ai/stop`、`GET /api/ai/defaults`。localhost バインド時のみ有効。
+claude は `--permission-mode acceptEdits`（全許可フラグは不使用）、grok は
+`--trust`（このリポジトリのみ信頼）+ モデル ID は `cursor-grok-4.6-<effort>[-fast]`
+形式へ `cursor_model_id()` で合成（--effort フラグは無い）。
+AI が presets/*.yaml を編集すると done イベントの edited_files 経由で GUI が
+プリセット一覧を更新し、読み込み中プリセットなら自動再読込→ライブプレビュー反映。
+「現在の GUI 設定を渡す」ON で現在フォームの YAML が文脈として注入される。
+
 ### 実行（mrender.py: 統合 CLI）
 
 **重要**: `render` / `lightcurve` / `preview` / `onboard` 系のパラメータ（軌道要素、フレーム数、サンプル数、外部モデル指定など）は **YAML プリセット経由** で指定する。`config_loader.build_parser()` は `--config` 以外の個別 CLI フラグを登録しない設計なので、`--altitude` や `--frames` を直接渡すことはできない。CLI で上書きしたい場合は、差分を別 YAML に書いて `--config A.yaml B.yaml`（後勝ち）で重ねる。
 
 ```bash
 # 軌道レンダリング（render verb）
-python mrender.py render --config presets/iss_basic.yaml
+python mrender.py render --config presets/iss.yaml
 
 # 複数 YAML 合成（後の指定が優先）
-python mrender.py render --config presets/iss_basic.yaml presets/earth_beauty.yaml
+python mrender.py render --config presets/iss.yaml presets/earth_beauty.yaml
 
 # CSV ephemeris から軌道・姿勢を再生
-python mrender.py render --config presets/csv_orbit.yaml
+python mrender.py render --config presets/csv_attitude_orbit.yaml
 
 # 1 フレームだけプレビュー（材質・ライティング調整用）
-python mrender.py preview --config presets/iss_basic.yaml
+python mrender.py preview --config presets/iss.yaml
 
 # 観測者から見たライトカーブのみ高速計算
-python mrender.py lightcurve --config presets/iss_basic.yaml
+python mrender.py lightcurve --config presets/iss.yaml
 
 # 軌道上 2 機 — deputy 視点で chief を注視（Case B）
 python mrender.py onboard --config presets/relative_view.yaml
@@ -70,6 +155,34 @@ python relative_motion.py --mode csv --rel-csv input/rel_state_hcw.csv --frames 
 python relative_motion.py --mode tumble --rel-position 1.5 0 0 --wx 0.3 --wz 1.0
 ```
 
+### 実行（On-Orbit Servicing 近接撮像シナリオ）
+
+```bash
+# サービサ機載カメラ（chief、非描画）から 35 m 先のタンブリング Hubble を撮像。
+# 地球背景・太陽黒体色・星空 envmap 付きのフォトリアリスティック設定（状態推定研究向け）
+python mrender.py relative --config presets/oos_hubble.yaml
+
+# 低品質プレビュー（CLI 上書き）
+python mrender.py relative --config presets/oos_hubble.yaml --frames 3 --samples 16
+```
+
+relative verb のフォトリアル環境オプション（`relative_motion.py`）:
+`--hide-chief`（カメラ=機載視点で chief 非描画）/ `--show-earth` +
+`--earth-direction --earth-altitude-km --earth-texture --earth-rotation-deg`
+（km 単位シーンに地球球体を背景配置、earthshine の照り返しはパストレで自動）/
+`--sun-direction --sun-irradiance --sun-temperature`（黒体放射色）/
+`--starfield <exr>` + `--env-brightness` / `--camera-up` / `--max-depth`。
+
+**近接シーンは relative verb を使うこと**: render/onboard パス（地球半径=1.0 の
+シーン単位）では数十 m の分離距離が float32 精度で崩れる。relative は km 単位
+シーンなので近接撮像に強い。
+
+`models/hubble.obj` は NASA 3D Resources の "Hubble Space Telescope (A)"（Draco
+圧縮 glb、`models/hubble_a.glb`）を Blender ヘッドレスで OBJ + PNG テクスチャ
+（`models/hubble_textures/`）に変換したもの。実寸 13.2 m に正規化、原点=バウン
+ディングボックス中心、パーツ名（OBJ の 'o'）はマテリアル別に hbltel_1..4 /
+hbltel_wfc_1。パーツ↔テクスチャ対応は `models/hubble_textures/material_map.txt`。
+
 ### 動画作成（ffmpeg必要）
 ```bash
 # 自動: YAML の rendering.make_video: true を立てれば render/relative/onboard が完了後に mp4 を吐く
@@ -96,11 +209,16 @@ ffmpeg -framerate 30 -i runs/<RUN>/frames/frame_%04d.png \
 ## アーキテクチャ
 
 ### モジュール構成
-- **mrender.py** - 統合 CLI（render / lightcurve / preview / rotation / relative）
+- **mrender.py** - 統合 CLI（render / lightcurve / preview / rotation / relative / onboard / gui）
 - **satellite_orbit.py** - render/lightcurve/preview のコア：軌道計算、シーン生成、レンダリングループ
 - **simple_rotation.py** - rotation のコア：オイラー回転運動方程式、クォータニオン姿勢、OBJパーツ別BSDF（軌道なし）
-- **relative_motion.py** - relative のコア：相対位置・相対姿勢で 2 機を配置（軌道なし、static/csv/tumble モード）
+- **relative_motion.py** - relative のコア：相対位置・相対姿勢で 2 機を配置（軌道なし、static/csv/tumble モード、地球背景・太陽・星空のフォトリアル環境オプション付き）
+- **gui_server.py / gui/index.html** - ブラウザ GUI（標準ライブラリ HTTP サーバー + 単一 HTML）。設定フォーム→YAML 生成→verb サブプロセス起動→進捗表示
 - **verbs/** - mrender サブコマンドのシム
+- **scene_common.py** - relative/rotation 共有のシーン部品・姿勢伝播（propagate_attitude / create_axes / create_satellite / split_obj_by_parts〔(path,mtime) キャッシュ内蔵〕/ load_model_with_parts）。**唯一の実装**で、両 verb は再エクスポート
+- **verb_parsers.py** - relative/rotation の argparse 定義（Mitsuba 非依存）。GUI・live_worker のデフォルト自動導出の真実源
+- **asset_cache.py** - mi.Bitmap / GLB→OBJ 変換 / BSDF 用 BitmapTexture 実体の (path,mtime) キャッシュ。バッチとライブの両経路が使用。**Emitter の実体共有は禁止**（画が壊れる。BSDF テクスチャ実体と Bitmap は共有安全・ゴールデン検証済み）
+- **mi_variant.py** - Mitsuba バリアント選択の唯一の実装（環境変数 `MRENDER_VARIANT`、既定 llvm_ad_rgb。DGX/CUDA 切替用）
 - **optical_materials.py** - `MaterialLibrary`クラス：宇宙機材料のBSDF定義（導体、誘電体、複合材）
 - **optical_lighting.py** - 太陽光/月光の生成、黒体放射色温度、星空環境光
 - **optical_atmosphere.py** - レイリー/ミー散乱、大気密度モデル、地球アルベド
@@ -149,7 +267,12 @@ satellite_orbit.pyでは以下のyoshimulib関数を使用している。新機�
 # 優先順位: CLI引数 > YAML > argparseデフォルト
 ```
 - YAMLのセクション名（`model:`, `dynamics:`等）は組織用で、中のキーがフラット化される
-- YAMLキー名はargparse dest名と一致させる（例: `model_path`, `camera_origin`）
+- YAMLキー名はargparse dest名と一致させる（例: `model_path`, `camera_origin`）。
+  **未知キーは黙って無視される**ので、効かない設定があったらまずキー名を疑う。
+  地球テクスチャの正キーは `earth_day_texture` / `earth_night_texture` /
+  `earth_cloud_texture`。旧キー（`earth:` セクション配下の `day_texture` 等）は
+  render 系 CLI では config_loader が別名変換するが、GUI・ライブプレビューの
+  素朴フラット化経路では変換されないため、正キーで書くのが安全
 - dict型の値（`model_bsdf`, `model_parts`等）もset_defaultsでargsに載る
 - `--config nargs='+'` で複数YAML指定可能（後のファイルが優先）
 
@@ -164,9 +287,9 @@ CLIオプション → OrbitalElements → メインループ:
 ```
 
 ### レンダリング設定
-- バリアント：`scalar_rgb`（CPUベースパストレーシング）
+- バリアント：`llvm_ad_rgb`（LLVM JIT による CPU パストレーシング）。GPU を使う場合は各モジュール冒頭の `mi.set_variant()` を `cuda_ad_rgb` に変更する
 - デフォルト：128サンプル/ピクセル、12バウンス深度
-- 出力：`output/`ディレクトリにPNGフレーム
+- 出力：`mrender.py` 経由なら `runs/<ts>_<verb>_<name>/frames/` に PNG 連番（`output/` はスタンドアロン実行時の既定で、`simple_rotation.py` は `output/simple/`、`relative_motion.py` は `output/relative/`）
 
 ## 主要な定数（yoshimulibから取得）
 - 地球赤道半径：6378.137 km（WGS84）

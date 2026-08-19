@@ -181,6 +181,45 @@ def load_yaml_config(paths: List[str]) -> dict:
     return merged
 
 
+def load_flat_yaml_config(paths: List[Any]) -> Dict[str, Any]:
+    """YAML プリセットを「素朴な 1 段フラット化」で読み込む。
+
+    relative / rotation verb 用のローダ。`load_yaml_config()` と違いセクション
+    名の別名解決 (SECTION_ALIASES) や `primary:` 等の特殊変換は一切行わず、
+    dict 値のセクションを 1 段だけ展開して argparse の dest 名
+    （アンダースコア区切り）に揃えるだけ。
+
+        rendering: {frames: 30}   →  {'frames': 30}
+        mode: tumble              →  {'mode': 'tumble'}
+
+    複数ファイル指定時は後のファイルが優先（dict の上書きマージ）。
+    優先順位は呼び出し側の parse_args で CLI 引数 > YAML > argparse デフォルト。
+
+    実装がここにあるのは Mitsuba 非依存だから。レンダラ本体
+    (`relative_motion` / `simple_rotation`) と GUI サーバー (`gui_server`) の
+    両方がこの 1 実装を共有する。
+
+    Args:
+        paths: YAML ファイルパス（str でも Path でも可）。
+
+    Returns:
+        argparse.set_defaults(**merged) に渡せるフラット辞書。
+    """
+    merged: Dict[str, Any] = {}
+    for path in paths:
+        with open(path) as handle:
+            data = yaml.safe_load(handle)
+        if data is None:
+            continue
+        for key, value in data.items():
+            if isinstance(value, dict):
+                for sub_key, sub_value in value.items():
+                    merged[normalize_key(sub_key)] = sub_value
+            else:
+                merged[normalize_key(key)] = value
+    return merged
+
+
 # argparse のデフォルト値辞書。
 # build_parser() の中で `parser.set_defaults(**_ARG_DEFAULTS)` 経由で適用される。
 # 優先順位: CLI 引数 > YAML > _ARG_DEFAULTS の順で上書きされる。
@@ -289,7 +328,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 例:
-  python satellite_orbit.py --config presets/iss_basic.yaml
+  python satellite_orbit.py --config presets/iss.yaml
   python satellite_orbit.py --config presets/multi_object.yaml
         """
     )

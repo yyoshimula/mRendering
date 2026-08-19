@@ -9,6 +9,9 @@
       (create_earth / create_clouds / create_night_lights / create_atmosphere)
     - 昼夜境界 (terminator) マスクの生成と、夜間光テクスチャへの適用
     - 雲テクスチャの不透明度プレ乗算
+    - 上記 2 つの生成物 (PNG/EXR) のメモ化。太陽方向・自転角・パラメータが
+      前フレームと同じなら再生成せず、既存ファイルのパスを返す
+      (resolve_night_emission_texture / resolve_cloud_opacity_texture)
 
 呼び出し元: scene_builder.create_scene()
 
@@ -30,15 +33,32 @@ Mitsuba メモ:
     - 'homogeneous' medium は participating media (体積散乱) に使う
 """
 
+import os
 import numpy as np
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict, Tuple
 
 import mitsuba as mi
 
-# 夜間光テクスチャ等の bitmap キャッシュ。
-# load_bitmap_rgb_float() で同じパスを何度も読まないようにする。
-NIGHT_TEXTURE_CACHE: Dict[str, np.ndarray] = {}
+# 夜間光テクスチャ等の float RGB 配列キャッシュ。
+# キーは (path, mtime, target_w, target_h) で、値は **リサイズ済み** 配列。
+# 原寸をキャッシュすると earth_night 8K で ~1.1 GB が常駐してしまうため、
+# 実際に使うマスク解像度（既定 1024x512）まで落としたものだけを保持する。
+NIGHT_TEXTURE_CACHE: Dict[Tuple[str, float, int, int], np.ndarray] = {}
+
+# これを超える画素数の配列はキャッシュしない（雲テクスチャ 8192x4096 等）。
+# 8 Mpx = float32 RGB で 96 MB。
+RGB_CACHE_MAX_PIXELS = 8_000_000
+
+# 生成済みテクスチャ PNG/EXR の再利用メモ。
+# キーは「出力が一意に決まるパラメータ一式」で、値は生成済みファイルパス。
+# 太陽・地球自転が止まっているフレーム列では夜光テクスチャの中身が変わらない
+# ので、前フレームの PNG をそのまま使い回して再生成をスキップする。
+_GENERATED_TEXTURE_CACHE: Dict[Tuple[Any, ...], str] = {}
+
+# 太陽方向をキー化するときの丸め桁数。
+# 出力 PNG は 8bit 量子化されるので、この桁の差は画に現れない。
+_SUN_DIR_KEY_DECIMALS = 12
 
 
 def create_earth(radius=1.0, texture_path=None, rotation_deg: float = 0.0):
@@ -153,21 +173,45 @@ def resize_image_nearest(image: np.ndarray, width: int, height: int) -> np.ndarr
     return image[ys][:, xs]
 
 
-def load_bitmap_rgb_float(path: str) -> np.ndarray:
-    """bitmapをfloat RGB配列で読み込み（キャッシュ対応）
+def _mtime(path: str) -> float:
+    """ファイルの更新時刻を返す（取得できなければ 0.0）。キャッシュキー用。"""
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0.0
+
+
+def load_bitmap_rgb_float(path: str, target_w: int = 0, target_h: int = 0) -> np.ndarray:
+    """bitmap を float RGB 配列で読み込み、指定サイズへ最近傍リサイズする。
 
     Mitsuba の `mi.Bitmap` で読んで Float32 RGB に変換する。
     モノクロは 3 チャネルに複製される。
-    NIGHT_TEXTURE_CACHE にキャッシュされ、2 回目以降は I/O を省略する。
+
+    `target_w`/`target_h` が 0 なら原寸のまま返す。戻り値は
+    NIGHT_TEXTURE_CACHE に (path, mtime, target_w, target_h) キーで
+    キャッシュされるが、RGB_CACHE_MAX_PIXELS を超える巨大配列は
+    常駐メモリを圧迫するのでキャッシュしない。
+
+    Returns:
+        shape=(h, w, 3) の float32 配列。**呼び出し側で書き換えないこと**
+        （キャッシュ実体を共有するため）。
     """
-    cached = NIGHT_TEXTURE_CACHE.get(path)
+    key = (str(path), _mtime(path), int(target_w), int(target_h))
+    cached = NIGHT_TEXTURE_CACHE.get(key)
     if cached is not None:
         return cached
+
     bitmap = mi.Bitmap(path).convert(mi.Bitmap.PixelFormat.RGB, mi.Struct.Type.Float32)
     array = np.array(bitmap, copy=False)
     if array.ndim == 2:
         array = np.stack([array, array, array], axis=-1)
-    NIGHT_TEXTURE_CACHE[path] = array
+    if target_w and target_h:
+        # 縮小時は fancy indexing で新しい配列になるので、巨大な元 Bitmap の
+        # バッファは参照されず即座に解放される。
+        array = resize_image_nearest(array, target_w, target_h)
+
+    if array.shape[0] * array.shape[1] <= RGB_CACHE_MAX_PIXELS:
+        NIGHT_TEXTURE_CACHE[key] = array
     return array
 
 
@@ -178,11 +222,48 @@ def write_combined_night_texture(night_texture_path: str, night_mask: np.ndarray
     `night_texture * night_mask` を計算して PNG/EXR に書き出す。
     出力は scene_builder で `create_night_lights(texture_path=...)` の入力になる。
     """
-    night_texture = load_bitmap_rgb_float(night_texture_path)
     target_h, target_w = night_mask.shape
-    night_texture = resize_image_nearest(night_texture, target_w, target_h)
+    night_texture = load_bitmap_rgb_float(night_texture_path, target_w, target_h)
     combined = np.clip(night_texture * night_mask[..., None], 0.0, 1.0).astype(np.float32)
-    mi.util.write_bitmap(str(output_path), combined)
+    # write_async=False: 直後に同一フレームの mi.load_dict がこのファイルを読む。
+    # 既定の非同期書き込みだと空ファイルを読む競合が起きる（シーン構築が
+    # テクスチャ共有で高速化された結果、顕在化した）。
+    mi.util.write_bitmap(str(output_path), combined, write_async=False)
+
+
+def resolve_night_emission_texture(night_texture_path: str, sun_dir_body: np.ndarray,
+                                   mask_w: int, mask_h: int, softness: float,
+                                   output_path: Path) -> Path:
+    """夜側マスク適用済みの夜光テクスチャを用意し、そのパスを返す。
+
+    出力内容は (夜光テクスチャ, 本体固定系での太陽方向, マスク解像度, softness)
+    だけで決まる。フレームループでこれらが変わらない場合（太陽固定・地球自転
+    オフなど）は、既に書き出した前フレームの PNG をそのまま返して
+    マスク生成と書き出しをまるごとスキップする。
+
+    Args:
+        night_texture_path: 元の夜間光テクスチャ（BlackMarble 等）。
+        sun_dir_body: 地球本体固定系での太陽方向（自動正規化される）。
+        mask_w, mask_h: 昼夜マスクの解像度 [px]。
+        softness: terminator の滑らかさ（内積空間の幅）。
+        output_path: このフレームで書き出す先のパス。
+
+    Returns:
+        利用すべきテクスチャのパス（キャッシュヒット時は前フレームのもの）。
+    """
+    sun_key = tuple(np.round(np.asarray(sun_dir_body, dtype=float),
+                             _SUN_DIR_KEY_DECIMALS).tolist())
+    key = ('night', str(night_texture_path), _mtime(str(night_texture_path)),
+           sun_key, int(mask_w), int(mask_h), float(softness))
+    cached = _GENERATED_TEXTURE_CACHE.get(key)
+    if cached is not None and os.path.exists(cached):
+        return Path(cached)
+
+    night_mask = generate_night_mask(sun_dir_body, width=mask_w, height=mask_h,
+                                     softness=softness)
+    write_combined_night_texture(night_texture_path, night_mask, output_path)
+    _GENERATED_TEXTURE_CACHE[key] = str(output_path)
+    return output_path
 
 
 def write_cloud_opacity_texture(cloud_texture_path: str, opacity: float,
@@ -190,7 +271,25 @@ def write_cloud_opacity_texture(cloud_texture_path: str, opacity: float,
     """雲テクスチャに不透明度を適用して出力 (`cloud * opacity` をプレ乗算)。"""
     cloud_texture = load_bitmap_rgb_float(cloud_texture_path)
     combined = np.clip(cloud_texture * opacity, 0.0, 1.0).astype(np.float32)
-    mi.util.write_bitmap(str(output_path), combined)
+    mi.util.write_bitmap(str(output_path), combined, write_async=False)
+
+
+def resolve_cloud_opacity_texture(cloud_texture_path: str, opacity: float,
+                                  output_path: Path) -> Path:
+    """不透明度をプレ乗算した雲テクスチャを用意し、そのパスを返す。
+
+    出力内容は (雲テクスチャ, opacity) だけで決まりフレームに依存しないので、
+    ラン中は最初の 1 フレームだけ生成して以降は使い回す。
+    """
+    key = ('cloud', str(cloud_texture_path), _mtime(str(cloud_texture_path)),
+           float(opacity), str(output_path))
+    cached = _GENERATED_TEXTURE_CACHE.get(key)
+    if cached is not None and os.path.exists(cached):
+        return Path(cached)
+
+    write_cloud_opacity_texture(cloud_texture_path, opacity, output_path)
+    _GENERATED_TEXTURE_CACHE[key] = str(output_path)
+    return output_path
 
 
 def create_clouds(radius: float, texture_path: str, opacity: float = 0.5,

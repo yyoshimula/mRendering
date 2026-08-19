@@ -1,0 +1,97 @@
+# On-Orbit Servicing 近接検査シナリオ（フォトリアリスティック）
+#
+# シチュエーション:
+#   サービス衛星（chief、非描画）の機載光学カメラが、30 m 先で
+#   ゆっくりタンブリングするターゲット（NASA Hubble Space Telescope、
+#   実寸 13.2 m）を撮像する。背景に地球（昼面）、太陽光はカメラ後方から。
+#   状態推定（相対姿勢・角速度推定）研究用の連番画像を想定。
+#
+# 使用:
+#   python mrender.py relative --config presets/oos_hubble.yaml
+#   # 低品質プレビュー（CLI 上書き可）:
+#   python mrender.py relative --config presets/oos_hubble.yaml --frames 3 --samples 16
+#
+# 座標系: chief 中心の Hill/RTN frame [km]。カメラ＝chief 機載（原点）。
+# モデル: models/hubble.obj は NASA 3D Resources の
+#   "Hubble Space Telescope (A)" (glb) を Blender で OBJ+PNG に変換したもの。
+#   実寸 13.2 m に正規化済み、deputy_scale=0.001 で m→km 換算。
+
+rendering:
+  frames: 120
+  fps: 30
+  duration_sec: 120        # dt = 1 s/frame、ω~2°/s で全体 ~240° 回転
+  width: 1280
+  height: 960
+  samples: 256
+  make_video: true
+  video_fps: 30
+
+mode: tumble
+
+deputy:
+  # +R 方向 35 m 先にターゲット
+  rel_position: [0.035, 0.0, 0.0]
+  rel_quat: [0.0, 0.3826834, 0.0, 0.9238795]   # 初期姿勢: y 軸まわり 45°
+  deputy_model: models/hubble.obj
+  deputy_scale: 0.001      # モデル単位 m → シーン単位 km
+  # NASA モデルの焼き込みテクスチャ + 宇宙機材質パラメータ
+  deputy_parts:
+    hbltel_1:              # 本体パネル・ハンドレール・太陽電池パドル
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_1.png}
+      metallic: 0.35
+      roughness: 0.35
+    hbltel_2:              # 開口部・望遠鏡バッフル（黒）・光学系
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_2.png}
+      metallic: 0.1
+      roughness: 0.5
+    hbltel_3:              # アルミ蒸着カプトン MLI（皺のある金色フォイル）
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_3.png}
+      metallic: 0.85
+      roughness: 0.28
+    hbltel_4:              # 銀色 MLI ブランケット（前胴周り）
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_4.png}
+      metallic: 0.7
+      roughness: 0.35
+    hbltel_wfc_1:          # WFC ラジエータ
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_w.png}
+      metallic: 0.2
+      roughness: 0.45
+
+dynamics:
+  # HST 級の慣性テンソル [kg·m²]（トルクフリータンブル）
+  Ix: 36000.0
+  Iy: 87000.0
+  Iz: 93000.0
+  # 初期角速度 ~2°/s の低速タンブル [rad/s]
+  wx: 0.02
+  wy: 0.005
+  wz: 0.03
+
+camera:
+  # サービサ機載カメラ: 原点から +R 方向を注視
+  camera_origin: [0.0, 0.0, 0.0]
+  camera_target: [0.035, 0.0, 0.0]
+  camera_fov: 38.0
+  camera_up: [0.0, 0.0, 1.0]
+
+environment:
+  hide_chief: true                    # サービサ自身は描画しない（カメラ視点）
+  show_earth: true
+  earth_direction: [0.5, 0.0, -0.866] # 地心方向をやや前方へ→ターゲット背後に地球
+  earth_altitude_km: 535.0            # HST 軌道高度相当
+  earth_texture: earth_texture.jpg
+  sun_direction: [0.8, -0.35, -0.45]  # カメラ後方上側からターゲット前面を照らす
+  sun_irradiance: 4.5
+  sun_temperature: 5778.0             # 太陽の黒体放射色
+  starfield: assets/starfield.exr
+  env_brightness: 0.05
+  max_depth: 8
+
+visualization:
+  show_inertial_axes: false
+  show_body_axes: false

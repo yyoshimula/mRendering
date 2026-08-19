@@ -49,35 +49,6 @@ def compute_camera_up(camera_position: np.ndarray, camera_target: np.ndarray) ->
     return up
 
 
-def compute_auto_fov(camera_pos_km: np.ndarray, target_pos_km: np.ndarray,
-                     target_size_km: float = 0.01,
-                     margin_factor: float = 5.0,
-                     min_fov: float = 1.0, max_fov: float = 90.0) -> float:
-    """
-    カメラ-ターゲット間距離とターゲットサイズからFOVを自動計算
-
-    視半径 = arctan(target_size * margin / dist) を 2 倍して FOV (deg) を得る。
-    遠方の小さな物体 (デブリ等) を画面に収めるための補助関数。
-
-    Args:
-        camera_pos_km: カメラ位置 [km]
-        target_pos_km: ターゲット位置 [km]
-        target_size_km: ターゲットの特性サイズ [km]
-        margin_factor: フレーミングマージン倍率
-        min_fov: 最小FOV [deg]
-        max_fov: 最大FOV [deg]
-
-    Returns:
-        FOV [deg]
-    """
-    dist = np.linalg.norm(target_pos_km - camera_pos_km)
-    if dist < 1e-12:
-        return max_fov
-    half_angle = np.arctan2(target_size_km * margin_factor, dist)
-    fov = np.degrees(2.0 * half_angle)
-    return float(np.clip(fov, min_fov, max_fov))
-
-
 def compute_image_flux(image: Any) -> tuple:
     """レンダリング画像から総輝度と平均輝度を計算
 
@@ -186,8 +157,11 @@ def create_scene(camera_position=None, camera_target=None, camera_up=None,
         'type': 'scene',
 
         # 積分器（レンダリング手法）
+        # 大気（null BSDF + homogeneous 媒質のシェル）を含むシーンでは 'path' が
+        # 媒質透過の影レイ（NEE）を扱えず、太陽の直接光が全遮断されて地球が
+        # 真っ暗になる。媒質があるときだけ 'volpath' に切り替える。
         'integrator': {
-            'type': 'path',  # パストレーシング
+            'type': 'volpath' if use_atmosphere else 'path',
             'max_depth': 12,
         },
 

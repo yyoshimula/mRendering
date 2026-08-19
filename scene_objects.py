@@ -1,14 +1,14 @@
 """
-衛星・デブリの3Dオブジェクト生成モジュール
+衛星の3Dオブジェクト生成モジュール
 
-手続き的3Dモデル（衛星本体、ソーラーパネル、アンテナ、デブリ）の生成、
-外部3Dモデル（OBJ/PLY/glTF）の読み込み、軌道線・相対ベクトル線の描画。
+手続き的3Dモデル（衛星本体、ソーラーパネル、アンテナ）の生成、
+外部3Dモデル（OBJ/PLY/glTF）の読み込み、軌跡線の描画。
 
 責務:
-    - 軌道周回物体 (衛星 / デブリ) を Mitsuba シーン辞書に追加できる形 ({key: shape_dict})
+    - 軌道周回物体を Mitsuba シーン辞書に追加できる形 ({key: shape_dict})
       で生成して返す
     - 外部 3D モデル (OBJ/PLY/GLB) を読み込み、同じ辞書形式に統一する
-    - 軌跡 (trail) や 2 物体間の相対ベクトル可視化用シリンダー列を生成
+    - 軌跡 (trail) 可視化用のシリンダー列を生成
 
 呼び出し元: satellite_orbit.py / relative_motion.py / simple_rotation.py
 返した辞書は scene_builder.create_scene(satellite_objects=...) 経由でシーンに合流する。
@@ -30,17 +30,18 @@
 
 import numpy as np
 from pathlib import Path
-from typing import Tuple, Optional, Dict, Any
+from typing import Optional, Dict, Any
 
 import mitsuba as mi
 
+from asset_cache import glb_to_obj_cached
 from optical_materials import (
     MaterialLibrary,
     create_carbon_composite_bsdf,
     create_white_paint_bsdf,
     create_kapton_mli_bsdf,
 )
-from orbit_mechanics import compute_orbital_position, SCALE_FACTOR
+from orbit_mechanics import SCALE_FACTOR
 
 
 def resolve_material_by_name(name: str) -> Dict[str, Any]:
@@ -88,7 +89,7 @@ def load_external_model(
     prefix: str = 'ext',
 ) -> Dict[str, Any]:
     """
-    外部3Dモデル（OBJ/PLY）を読み込み、create_satellite()/create_debris()と同じdict形式で返す
+    外部3Dモデル（OBJ/PLY）を読み込み、create_satellite()と同じdict形式で返す
 
     フロー:
         1. .glb/.gltf は trimesh で .obj に変換 (中間ファイルを同ディレクトリに作る)
@@ -116,23 +117,12 @@ def load_external_model(
     ext = path.suffix.lower()
 
     # glTF/GLB → OBJ 変換（trimesh経由）
-    # Mitsuba 3 は OBJ/PLY の組み込みパーサしか持たないため、glTF はここで一度 OBJ に落とす
+    # Mitsuba 3 は OBJ/PLY の組み込みパーサしか持たないため、glTF はここで一度 OBJ に落とす。
+    # 変換は決定的なので asset_cache 側で (path, mtime) メモ化しておき、
+    # フレームループ中に同じ GLB を何度も変換／上書きしないようにする。
     if ext in ('.glb', '.gltf'):
-        import trimesh
-        scene_or_mesh = trimesh.load(str(path))
-        if isinstance(scene_or_mesh, trimesh.Scene):
-            meshes = [g for g in scene_or_mesh.geometry.values()
-                      if isinstance(g, trimesh.Trimesh)]
-            if not meshes:
-                raise ValueError(f"GLBファイルにメッシュが含まれていません: {filepath}")
-            mesh = trimesh.util.concatenate(meshes)
-        else:
-            mesh = scene_or_mesh
-        obj_path = path.with_suffix('.obj')
-        mesh.export(str(obj_path), file_type='obj', include_normals=False)
-        path = obj_path
+        path = glb_to_obj_cached(path)
         ext = '.obj'
-        print(f"  [trimesh] {filepath} → {obj_path}")
 
     if ext == '.obj':
         mesh_type = 'obj'
@@ -256,111 +246,6 @@ def create_satellite(position: np.ndarray, attitude_matrix: np.ndarray, scale: f
     return objects
 
 
-def create_debris(position: np.ndarray, attitude_matrix: np.ndarray, scale: float = 0.001,
-                 use_advanced_materials: bool = True,
-                 chief_style: str = 'full') -> dict:
-    """
-    デブリ（箱＋ウイング）モデルを作成
-
-    chief_style の 3 モード:
-        - 'marker'  : 単一の赤い小球 (位置確認用、姿勢無視)
-        - 'boxwing' : 小型 box + 左右 wing (procedural 簡易モデル)
-        - 'full'    : 'boxwing' より大きい本体 + 1 翼 (デフォルト)
-    """
-    mat_lib = MaterialLibrary()
-
-    if chief_style == 'marker':
-        # 位置マーカ用: 姿勢を無視した最小サイズの赤球。デバッグ・可視化向け
-        body_bsdf = {
-            'type': 'diffuse',
-            'reflectance': {'type': 'rgb', 'value': [0.95, 0.3, 0.25]}
-        }
-        marker_radius = max(scale * 0.25, 2.5e-4)
-        return {
-            'debris_body': {
-                'type': 'sphere',
-                'center': position.tolist(),
-                'radius': marker_radius,
-                'bsdf': body_bsdf
-            }
-        }
-
-    if chief_style == 'boxwing':
-        # 小型 box + 両翼パネル (左右対称)。色は固定 (グレー本体 + 紺パネル)
-        body_bsdf = {
-            'type': 'diffuse',
-            'reflectance': {'type': 'rgb', 'value': [0.75, 0.75, 0.78]}
-        }
-        wing_bsdf = {
-            'type': 'diffuse',
-            'reflectance': {'type': 'rgb', 'value': [0.12, 0.22, 0.4]}
-        }
-        transform = mi.ScalarTransform4f.translate(position)
-        rotation_matrix = np.eye(4)
-        rotation_matrix[:3, :3] = attitude_matrix
-        transform = transform @ mi.ScalarTransform4f(rotation_matrix)
-
-        body_scale = mi.ScalarTransform4f.scale([scale * 0.45, scale * 0.45, scale * 0.60])
-        wing_scale = mi.ScalarTransform4f.scale([scale * 1.00, scale * 0.10, scale * 0.35])
-        wing_left = mi.ScalarTransform4f.translate([-scale * 0.70, 0, 0])
-        wing_right = mi.ScalarTransform4f.translate([scale * 0.70, 0, 0])
-        return {
-            'debris_body': {
-                'type': 'cube',
-                'to_world': transform @ body_scale,
-                'bsdf': body_bsdf
-            },
-            'debris_wing_left': {
-                'type': 'cube',
-                'to_world': transform @ wing_left @ wing_scale,
-                'bsdf': wing_bsdf
-            },
-            'debris_wing_right': {
-                'type': 'cube',
-                'to_world': transform @ wing_right @ wing_scale,
-                'bsdf': wing_bsdf
-            }
-        }
-
-    # 'full' (デフォルト): 大型本体 + 片翼 (非対称デブリ想定)
-    if use_advanced_materials:
-        body_bsdf = mat_lib.get_aluminum()
-        wing_bsdf = mat_lib.get_solar_panel()
-    else:
-        body_bsdf = {
-            'type': 'diffuse',
-            'reflectance': {'type': 'rgb', 'value': [0.7, 0.7, 0.75]}
-        }
-        wing_bsdf = {
-            'type': 'diffuse',
-            'reflectance': {'type': 'rgb', 'value': [0.1, 0.2, 0.4]}
-        }
-
-    transform = mi.ScalarTransform4f.translate(position)
-    rotation_matrix = np.eye(4)
-    rotation_matrix[:3, :3] = attitude_matrix
-    transform = transform @ mi.ScalarTransform4f(rotation_matrix)
-
-    body_scale = mi.ScalarTransform4f.scale([scale * 1.0, scale * 1.0, scale * 1.5])
-    wing_scale = mi.ScalarTransform4f.scale([scale * 2.5, scale * 0.15, scale * 0.8])
-    wing_offset = mi.ScalarTransform4f.translate([scale * 1.4, 0, 0])
-
-    objects = {
-        'debris_body': {
-            'type': 'cube',
-            'to_world': transform @ body_scale,
-            'bsdf': body_bsdf
-        },
-        'debris_wing': {
-            'type': 'cube',
-            'to_world': transform @ wing_offset @ wing_scale,
-            'bsdf': wing_bsdf
-        }
-    }
-
-    return objects
-
-
 def create_trajectory_trail(positions_km, line_radius=0.005,
                             color=(0.2, 0.6, 1.0), glow=0.5):
     """衛星が通過した軌跡を線（シリンダー列）で描画する。
@@ -411,67 +296,3 @@ def create_trajectory_trail(positions_km, line_radius=0.005,
         objects[f'trail_{i}'] = seg
 
     return objects
-
-
-def create_relative_line(p0: np.ndarray, p1: np.ndarray, line_radius: float = 0.0005,
-                         color: Tuple[float, float, float] = (1.0, 0.4, 0.2)) -> dict:
-    """
-    2点間の相対ベクトルを可視化する発光ライン
-
-    cylinder のローカル軸 (Z) を p0→p1 方向に揃えるため、Z 軸との回転を
-    Rodrigues の公式で計算して to_world に組み込む。
-    p0/p1 はシーン単位 (地球半径=1.0)。
-    """
-    direction = p1 - p0
-    length = np.linalg.norm(direction)
-    if length < 1e-10:
-        return {}
-
-    direction_normalized = direction / length
-
-    # Z 軸 (cylinder のデフォルト長軸) と方向ベクトルから回転軸・角度を求める
-    z_axis = np.array([0, 0, 1])
-    rotation_axis = np.cross(z_axis, direction_normalized)
-    rotation_axis_norm = np.linalg.norm(rotation_axis)
-
-    if rotation_axis_norm < 1e-10:
-        # 方向が ±Z にほぼ平行 (cross が 0 になる) ときは個別に処理
-        if direction_normalized[2] > 0:
-            rotation_matrix = np.eye(3)
-        else:
-            rotation_matrix = np.diag([1, -1, -1])
-    else:
-        # Rodrigues の回転公式: R = I + sin(θ) K + (1 - cos(θ)) K^2
-        rotation_axis = rotation_axis / rotation_axis_norm
-        cos_angle = np.dot(z_axis, direction_normalized)
-        angle = np.arccos(np.clip(cos_angle, -1, 1))
-        K = np.array([
-            [0, -rotation_axis[2], rotation_axis[1]],
-            [rotation_axis[2], 0, -rotation_axis[0]],
-            [-rotation_axis[1], rotation_axis[0], 0]
-        ])
-        rotation_matrix = np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * K @ K
-
-    # cylinder を中点に配置し、Z 軸を p0→p1 方向に向け、長さを length に伸ばす
-    center = (p0 + p1) / 2.0
-    transform_matrix = np.eye(4)
-    transform_matrix[:3, :3] = rotation_matrix
-    transform_matrix[:3, 3] = center
-
-    transform = mi.ScalarTransform4f(transform_matrix)
-    scale = mi.ScalarTransform4f.scale([line_radius, line_radius, length / 2])
-
-    return {
-        'relative_line': {
-            'type': 'cylinder',
-            'to_world': transform @ scale,
-            'bsdf': {
-                'type': 'diffuse',
-                'reflectance': {'type': 'rgb', 'value': list(color)}
-            },
-            'emitter': {
-                'type': 'area',
-                'radiance': {'type': 'rgb', 'value': [c * 2.0 for c in color]}
-            }
-        }
-    }

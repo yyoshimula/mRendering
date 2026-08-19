@@ -61,7 +61,7 @@ def run(args: argparse.Namespace, run_dir: RunDir | None = None) -> RunDir:
             run_dir.path,
             args.observer_lat,    # 観測者緯度 [deg]
             args.observer_lon,    # 観測者経度 [deg]
-            args.observer_alt,    # 観測者標高 [m]
+            args.observer_alt,    # 観測者標高 [km]
             args.light_curve_fov,        # 仮想望遠鏡の画角 [deg]
             args.light_curve_samples,    # 1 サンプルあたりのレイ数
         )

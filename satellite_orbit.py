@@ -27,6 +27,7 @@ import csv
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+import drjit as dr
 import mitsuba as mi
 import numpy as np
 
@@ -47,12 +48,15 @@ from scene_builder import (
     create_scene,
 )
 from scene_earth import (
-    generate_night_mask,
+    resolve_cloud_opacity_texture,
+    resolve_night_emission_texture,
     rotate_vector_z,
-    write_cloud_opacity_texture,
-    write_combined_night_texture,
 )
+from asset_cache import preload_bitmaps, share_bsdf_textures
 from scene_objects import create_trajectory_trail, create_satellite, load_external_model
+
+from yoshimulib.orbit.transforms import shadow as earth_shadow_function
+from yoshimulib.orbit.orbital_elements import AU_KM as SUN_DISTANCE_KM
 
 from render_config import (
     DEFAULT_ORBIT_SETTINGS,
@@ -69,10 +73,39 @@ from config_loader import (
     validate_model_paths,
 )
 
-# Mitsuba のバリアント設定。LLVM ベースのスペクトル AD レンダラを使用。
-# CUDA バックエンドへ切り替える場合は下行のコメントアウトを解除する。
-mi.set_variant('llvm_ad_rgb')
-# mi.set_variant('cuda_ad_rgb')
+# Mitsuba のバリアント設定。既定は LLVM、MRENDER_VARIANT 環境変数で切替
+# （例: MRENDER_VARIANT=cuda_ad_rgb,llvm_ad_rgb）。詳細は mi_variant.py。
+from mi_variant import init_variant
+init_variant(mi)
+
+# 太陽の半径 [km]（食判定で太陽視半径を求めるのに使う。yoshimulib には定数が無い）。
+SUN_RADIUS_KM = 695700.0
+
+
+def is_in_earth_shadow(position_km: np.ndarray, sun_direction: np.ndarray) -> bool:
+    """物体が地球の本影（umbra）に入っているかを判定する。
+
+    yoshimulib の ``shadow()``（Montenbruck & Gill p.81 の円錐影モデル）を使い、
+    太陽視半径と地球視半径の重なりから照射率 ν∈[0,1] を求める。
+    ν = 1 が全照、0 < ν < 1 が半影、ν = 0 が本影。
+
+    Args:
+        position_km: 物体の ECI 位置 [km]。
+        sun_direction: 地心→太陽の単位ベクトル（``resolve_sun_direction`` の戻り値）。
+
+    Returns:
+        本影内なら True。半影・全照は False（LEO の半影通過は数秒で、
+        ライトカーブのサンプル間隔に対して無視できるため）。
+    """
+    # shadow() は太陽「位置」を要求するので、単位方向を 1 au 伸ばして与える。
+    sun_position_km = np.asarray(sun_direction, dtype=float) * SUN_DISTANCE_KM
+    nu = earth_shadow_function(
+        np.asarray(position_km, dtype=float),
+        sun_position_km,
+        SUN_RADIUS_KM,
+        EARTH_RADIUS_KM,
+    )
+    return bool(float(np.atleast_1d(nu)[0]) <= 0.0)
 
 
 def prefix_scene_objects(objects: Dict[str, Any], prefix: str) -> Dict[str, Any]:
@@ -395,8 +428,10 @@ def build_earth_textures(
 
     - ``earth_rotation_deg``: 地球メッシュに掛ける Z 軸回りの自転角 [deg]
     - 夜間光: 太陽方向を地球本体座標系に逆回転してから、昼夜マスクを生成し、
-      昼テクスチャと合成して出力する（フレーム毎に PNG を生成）
-    - 雲: cloud_opacity が 1.0 でなければ EXR を再生成、1.0 ならテクスチャを直接使う
+      夜光テクスチャと合成して PNG に出力する。太陽方向・自転角が前フレームと
+      同じなら生成済み PNG を使い回す（scene_earth 側でメモ化）
+    - 雲: cloud_opacity が 1.0 でなければ EXR を生成（内容はフレーム非依存なので
+      ラン中 1 度だけ）、1.0 ならテクスチャを直接使う
     """
     earth_rotation_deg = 0.0
     if config.earth.earth_rotation:
@@ -413,32 +448,30 @@ def build_earth_textures(
         mask_h = max(int(mask_w // 2), 8)
         # 太陽方向を地球の自転と逆向きに回し、本体固定座標系での太陽方向を得る。
         sun_dir_body = rotate_vector_z(sun_direction, -earth_rotation_deg)
-        night_mask = generate_night_mask(
-            sun_dir_body,
-            width=mask_w,
-            height=mask_h,
-            softness=config.earth.night_terminator_softness,
-        )
         night_dir = output_dir / 'night_textures'
         night_dir.mkdir(parents=True, exist_ok=True)
-        # フレーム毎にテクスチャを書き出す（夜側だけ発光、昼側はマスクで暗くする）。
-        night_emission_texture = night_dir / f'night_emission_{frame:04d}.png'
-        write_combined_night_texture(
+        # 夜側だけ発光し昼側はマスクで暗くしたテクスチャ。太陽方向・自転角が
+        # 前フレームと同じなら resolve_* 側で前フレームの PNG を再利用する
+        # （太陽固定＋自転オフのランでは 1 枚しか生成されない）。
+        night_emission_texture = resolve_night_emission_texture(
             config.earth.night_texture,
-            night_mask,
-            night_emission_texture,
+            sun_dir_body,
+            mask_w,
+            mask_h,
+            config.earth.night_terminator_softness,
+            night_dir / f'night_emission_{frame:04d}.png',
         )
 
     if config.earth.use_clouds and config.earth.cloud_texture and Path(config.earth.cloud_texture).exists():
         if abs(config.earth.cloud_opacity - 1.0) > 1e-6:
-            # opacity が 1.0 でない場合のみ EXR を再生成（フレーム間で共有するので 1 枚で十分）。
+            # opacity が 1.0 でない場合のみ EXR を生成（内容はフレームに依存しない
+            # ので、resolve_* 側のメモ化によりラン中 1 度だけ書き出される）。
             cloud_dir = output_dir / 'cloud_textures'
             cloud_dir.mkdir(parents=True, exist_ok=True)
-            cloud_opacity_texture = cloud_dir / 'cloud_opacity.exr'
-            write_cloud_opacity_texture(
+            cloud_opacity_texture = resolve_cloud_opacity_texture(
                 config.earth.cloud_texture,
                 config.earth.cloud_opacity,
-                cloud_opacity_texture,
+                cloud_dir / 'cloud_opacity.exr',
             )
         else:
             cloud_opacity_texture = Path(config.earth.cloud_texture)
@@ -463,13 +496,18 @@ def render_light_curve(
 
     各フレームで以下を計算する:
         - range_km:        観測者と物体の距離 [km]
-        - phase_angle_deg: 太陽方向ベクトルと観測者→物体逆方向の成す角 [deg]
-                            （= 太陽–物体–観測者 角。0° は太陽背後、180° は満月相当）
+        - phase_angle_deg: 太陽方向と物体→観測者方向の成す角 [deg]
+                            （= 太陽–物体–観測者 角。0° は観測者側の面が全面
+                            照らされる満月相当、180° は逆光の新月相当）
+        - in_shadow:       物体が地球の本影に入っていれば 1、そうでなければ 0
         - flux_total / flux_mean: Mitsuba で物体のみ（地球・環境光を除く）を
                                    レンダした画像の輝度総和・平均
         - rel_mag:         最大輝度を基準とする相対等級 (-2.5 log10(F/Fmax))
 
-    地球が観測者と物体の間にある（``is_earth_occluded``）場合は flux=0。
+    flux が 0 になるのは次の 2 通り:
+        1. 地球が観測者と物体の間にある（``is_earth_occluded``） = 見えない
+        2. 物体が地球の影に入っている（``is_in_earth_shadow``）   = 光っていない
+    この 2 つは独立で、LEO では後者（食）が軌道の ~1/3 を占める。
     出力 CSV はデフォルトで ``output_dir/light_curve.csv``。
     """
     # 地上観測者位置（緯度経度高度 → ECI [km]）。
@@ -489,8 +527,12 @@ def render_light_curve(
         # 位相角: 太陽方向と観測方向（物体→観測者）の成す角。
         phase_angle_deg = float(np.degrees(np.arccos(np.clip(np.dot(sun_direction, obs_dir), -1.0, 1.0))))
 
-        if is_earth_occluded(observer_km, state.position_km):
+        # 食（地球の影）判定は視線遮蔽とは独立: 見えていても光っていない場合がある。
+        in_shadow = is_in_earth_shadow(state.position_km, sun_direction)
+
+        if is_earth_occluded(observer_km, state.position_km) or in_shadow:
             # 地球による遮蔽 → 完全に見えないものとする（diffraction 等は無視）。
+            # 食中 → 太陽光が当たらないので反射光も無い（地球照は無視）。
             total_flux = 0.0
             mean_flux = 0.0
         else:
@@ -533,7 +575,9 @@ def render_light_curve(
                 include_envmap=False,
                 sample_count=sample_count,
             )
-            scene = mi.load_dict(scene_dict)
+            # 画像テクスチャは (path, mtime) キャッシュ済みの Bitmap 実体へ差し替える
+            # （原寸 = max_width 0 なので画は変わらない）。
+            scene = mi.load_dict(preload_bitmaps(share_bsdf_textures(scene_dict)))
             image = mi.render(scene)
             total_flux, mean_flux = compute_image_flux(image)
 
@@ -542,6 +586,7 @@ def render_light_curve(
             'time_s': time_s,
             'range_km': range_km,
             'phase_angle_deg': phase_angle_deg,
+            'in_shadow': 1 if in_shadow else 0,
             'flux_total': total_flux,
             'flux_mean': mean_flux,
         })
@@ -558,13 +603,15 @@ def render_light_curve(
     output_path = output_dir / 'light_curve.csv'
     with output_path.open('w', newline='') as handle:
         writer = csv.writer(handle)
-        writer.writerow(['frame', 'time_s', 'range_km', 'phase_angle_deg', 'flux_total', 'flux_mean', 'rel_mag'])
+        writer.writerow(['frame', 'time_s', 'range_km', 'phase_angle_deg', 'in_shadow',
+                         'flux_total', 'flux_mean', 'rel_mag'])
         for record in records:
             writer.writerow([
                 record['frame'],
                 f"{record['time_s']:.6f}",
                 f"{record['range_km']:.6f}",
                 f"{record['phase_angle_deg']:.6f}",
+                record['in_shadow'],
                 f"{record['flux_total']:.8e}",
                 f"{record['flux_mean']:.8e}",
                 '' if np.isnan(record['rel_mag']) else f"{record['rel_mag']:.6f}",
@@ -633,7 +680,10 @@ def render_frame(frame: int, total_frames: int, objects: List[ObjectSpec], confi
         atmosphere_radius_scale=config.earth.atmosphere_radius_scale,
     )
     # シーン辞書 → Mitsuba オブジェクト → パストレ実行。
-    scene = mi.load_dict(scene_dict)
+    # load_dict の前に、地球テクスチャ・星空 HDRI などの画像を (path, mtime)
+    # キャッシュ済みの Bitmap 実体へ差し替える。原寸（max_width=0）で渡すので
+    # Mitsuba 側の処理経路は filename 指定時と同一 = 画は変わらない。
+    scene = mi.load_dict(preload_bitmaps(share_bsdf_textures(scene_dict)))
 
     # 進捗表示用の高度（地心距離 - WGS84 赤道半径）。
     primary_altitude = np.linalg.norm(states[0].position_km) - EARTH_RADIUS_KM
@@ -641,10 +691,22 @@ def render_frame(frame: int, total_frames: int, objects: List[ObjectSpec], confi
     image = mi.render(scene)
 
     # HDR レンダ結果に露光・ガンマを掛けて 8bit PNG 化。
+    # apply_tonemap の出力は既に表示用（ガンマ済み）なので、mi.util.write_bitmap の
+    # 既定 sRGB 変換を通すとガンマが二重にかかり宇宙背景がグレーに浮く。
+    # srgb_gamma=False で「そのまま」8bit 量子化して書き出す。
     output_path = output_dir / f'frame_{frame:04d}.png'
     tonemapped = apply_tonemap(image, exposure=config.lighting.exposure, gamma=config.lighting.gamma)
-    mi.util.write_bitmap(str(output_path), tonemapped)
+    bmp = mi.Bitmap(tonemapped).convert(
+        mi.Bitmap.PixelFormat.RGB, mi.Struct.Type.UInt8, srgb_gamma=False)
+    bmp.write(str(output_path))
     print(f"保存完了: {output_path}")
+
+    # Dr.Jit は解放済みブロックを内部プールに溜め込むため、フレームごとに明示的に
+    # 返却しないと巨大テクスチャ数フレーム分の RSS が積み上がる
+    # （earth_beauty 3 フレームで実測 15.4 GB → 10.7 GB）。
+    # 単なるアロケータへの返却なので画も所要時間も変わらない。
+    del scene, image, tonemapped, bmp
+    dr.flush_malloc_cache()
 
 
 def print_run_summary(

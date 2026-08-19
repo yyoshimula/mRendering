@@ -27,8 +27,7 @@ from typing import Tuple, Optional
 
 from scipy.integrate import solve_ivp
 
-from yoshimulib.orbit.orbital_elements import oe2rv, rv2oe, MU_EARTH_KM, R_EARTH_KM, AU_KM
-from yoshimulib.orbit.transforms import dcm_i2rtn
+from yoshimulib.orbit.orbital_elements import oe2rv, MU_EARTH_KM, R_EARTH_KM, AU_KM
 from yoshimulib.attitude.quaternion import q2dcm
 
 # 物理定数 (yoshimulib)
@@ -259,13 +258,19 @@ class CsvEphemeris:
         data = np.array(rows)
 
         self._times = data[:, col_idx['time_s']]
+        # 角度列 (raan, ome, f) は ±π で巻き戻るため、ロード時に np.unwrap して
+        # 連続な位相にしておく。巻き戻り区間をそのまま np.interp すると
+        # 「+π → -π」を線形に横断してしまい、軌道位置が数万 km ずれる
+        # （実測: input/abs_deputy_hcw.csv の f_rad 巻き戻り区間中点 t=43075.0
+        #  で位置誤差 84,328 km）。unwrap 後は隣接サンプル間隔 (~30 km) に収まる。
+        # oe2rv は sin/cos しか使わないので、2π の絶対オフセットは無害。
         self._oe = np.column_stack([
             data[:, col_idx['a_km']],
             data[:, col_idx['e']],
-            data[:, col_idx['inc_rad']],
-            data[:, col_idx['raan_rad']],
-            data[:, col_idx['ome_rad']],
-            data[:, col_idx['f_rad']],
+            data[:, col_idx['inc_rad']],  # i ∈ [0, π] は巻き戻らないのでそのまま
+            np.unwrap(data[:, col_idx['raan_rad']]),
+            np.unwrap(data[:, col_idx['ome_rad']]),
+            np.unwrap(data[:, col_idx['f_rad']]),
         ])
 
         if all(c in header for c in self._ATTITUDE_COLS):
@@ -303,7 +308,11 @@ class CsvEphemeris:
 
     # ------------------------------------------------------------------
     def _interp_oe(self, t: float) -> np.ndarray:
-        """時刻 t における軌道要素 6 成分を線形補間で返す。"""
+        """時刻 t における軌道要素 6 成分を線形補間で返す。
+
+        角度列 (raan / ome / f) は __init__ で np.unwrap 済みなので、
+        ±π の巻き戻りをまたぐ区間でも素直に線形補間できる。
+        """
         self._warn_if_out_of_range(t)
         t_clamped = np.clip(t, self.t_min, self.t_max)
         return np.array([np.interp(t_clamped, self._times, self._oe[:, i]) for i in range(6)])
@@ -322,13 +331,49 @@ class CsvEphemeris:
     def attitude_at(self, t: float) -> Optional[np.ndarray]:
         """時刻 t [s] における姿勢行列 (3x3 DCM, Body→ECI) を返す。
 
-        CSV に q1..q4 列が無ければ None。クォータニオンは線形補間後に再正規化。
-        規約は MATLAB/yoshimulib と同じスカラーラスト [qx, qy, qz, qw]。
+        CSV に q1..q4 列が無ければ None。
+        クォータニオン規約: q は **inertial(ECI)→body** の姿勢クォータニオン
+        （航空宇宙標準、スカラーラスト [qx, qy, qz, qw]）。
+
+        補間は「符号整列付き nlerp」。q と -q は同一姿勢を表すので、
+        成分ごとに素の線形補間をすると q→-q をまたぐ区間で 180° 反対側へ
+        回ってしまう（2 行 CSV の中点で回転角 180°）。隣接サンプルの内積が
+        負なら符号を反転してから補間し、短い方の弧を通す。
+        ノルムが 0 近傍（q0 ≈ -q1 の真の対蹠）に潰れた場合は端点 q を返す。
+        範囲外 t は端点クランプ + 初回のみ stderr 警告（state_at と同様）。
         """
         if self._quat is None:
             return None
-        t_clamped = np.clip(t, self.t_min, self.t_max)
-        q = np.array([np.interp(t_clamped, self._times, self._quat[:, i]) for i in range(4)])
+        self._warn_if_out_of_range(t)
+        t_clamped = float(np.clip(t, self.t_min, self.t_max))
+
+        times = self._times
+        quats = self._quat
+        # 端点および単一サンプルはそのまま返す
+        if t_clamped <= times[0] or len(times) == 1:
+            q = quats[0]
+        elif t_clamped >= times[-1]:
+            q = quats[-1]
+        else:
+            # t_clamped を含む区間 [i, i+1] を探す
+            i = int(np.searchsorted(times, t_clamped, side='right')) - 1
+            i = int(np.clip(i, 0, len(times) - 2))
+            t0, t1 = times[i], times[i + 1]
+            q0 = quats[i]
+            q1 = quats[i + 1]
+            alpha = (t_clamped - t0) / (t1 - t0) if t1 > t0 else 0.0
+            # 符号整列（±q は同一姿勢 → 短い弧側へ揃える）
+            if np.dot(q0, q1) < 0.0:
+                q1 = -q1
+            q = (1.0 - alpha) * q0 + alpha * q1
+            n = np.linalg.norm(q)
+            if n < 1e-9:
+                # 真の対蹠（回転角 180°）で線形補間が原点に潰れるケース
+                q = q0
+            else:
+                q = q / n
+
+        q = np.asarray(q, dtype=float)
         q = q / np.linalg.norm(q)
         return self._quat_to_dcm(q)
 
@@ -336,8 +381,10 @@ class CsvEphemeris:
     def _quat_to_dcm(q: np.ndarray) -> np.ndarray:
         """クォータニオン [q1,q2,q3,q4] (スカラーラスト) → Body→ECI DCM。
 
-        MATLAB 側の `q2dcm(4, q)` は Rbi (ECI→Body) として使われている。
-        Mitsuba の `to_world` には Body→ECI が必要なので転置して返す。
+        規約: q は inertial(ECI)→body の姿勢クォータニオン。
+        yoshimulib の `q2dcm(q, scalar=4)` はそのまま ECI→Body の姿勢行列
+        A(q) を返す（数値検証済み: q2dcm(+90°z) @ [1,0,0] = [0,-1,0]）。
+        Mitsuba の `to_world` には body→world が必要なので A(q).T を返す。
         """
         return q2dcm(q, scalar=4).T
 
@@ -345,7 +392,7 @@ class CsvEphemeris:
 def compute_attitude_matrix(position: np.ndarray, velocity: np.ndarray,
                             mode: str = 'nadir', sun_direction: Optional[np.ndarray] = None) -> np.ndarray:
     """
-    衛星の姿勢行列を計算 (yoshimulib rv2oe/dcm_i2rtn使用)
+    衛星の姿勢行列を計算
 
     モード別の指向則:
       - nadir            : 機体 -z 軸を地球中心 (-R 方向) へ向ける（地球指向）
@@ -369,13 +416,12 @@ def compute_attitude_matrix(position: np.ndarray, velocity: np.ndarray,
     v_norm = velocity / np.linalg.norm(velocity)
 
     if mode == 'nadir':
-        # 位置・速度から軌道要素を逆算 → RTN 基底を ECI で取得
-        oe = rv2oe(position.reshape(1, 3), velocity.reshape(1, 3), EARTH_MU)
-        # dcm_i2rtn の引数順: (Ω, i, ω, f) ※ rv2oe の列順 [a,e,i,Ω,ω,f] に対応
-        C = dcm_i2rtn(oe[0, 3], oe[0, 2], oe[0, 4], oe[0, 5])
-        R_vec = C[0]  # radial out (地球→衛星)
-        S_vec = C[1]  # along-track (≈ 速度方向、円軌道で完全一致)
-        W_vec = C[2]  # orbit normal (R × S)
+        # RTN 基底を r, v から直接構成する（rv2oe → dcm_i2rtn 経由にしない）。
+        # 理由: 円軌道 (e = 0、本プロジェクトの既定) では近地点引数 ω と真近点角 f
+        # が個別には定義されず (ω + f のみ有意)、rv2oe が返す ω/f の分配が不定に
+        # なるため dcm_i2rtn 経由の RTN 基底が破綻する。r, v からの直接構成は
+        # e = 0 でも e ≠ 0 でも同じ基底を返し、非特異ケースでは従来実装と一致する。
+        R_vec, S_vec, W_vec = compute_lvlh_frame(position, velocity)
         # NADIR本体座標系: x=W, y=S, z=-R （z 軸が地心方向）
         x_body, y_body, z_body = W_vec, S_vec, -R_vec
 
@@ -433,63 +479,6 @@ def compute_sun_position(time: float) -> np.ndarray:
     return sun_direction
 
 
-def compute_football_debris_elements(
-    chaser_elements: OrbitalElements,
-    distance_km: float = 1.0,
-    phase_deg: float = 0.0,
-    cross_track_km: float = 0.0,
-    orientation_deg: float = 0.0,
-) -> OrbitalElements:
-    """
-    Chaser軌道要素からfootball相対運動するtarget(debris)の軌道要素を自動計算
-
-    Football(2:1 楕円) は Clohessy-Wiltshire (HCW) 方程式の同一周期解の一つ。
-    chaser の RTN フレームから見ると、deputy は radial 方向に半振幅 ρ、
-    along-track 方向に半振幅 2ρ の楕円を描く。半長軸を一致 (δa=0) させて
-    secular drift を抑え、δe で振幅、δM₀ で位相、δi で面外を作る。
-
-      - along-track 振幅 = 2 · radial 振幅 (CW の固有比)
-      - distance_km = along-track 半振幅 = 2·δe·a  →  δe = distance / (2·a)
-      - δM₀ で初期位相（楕円上のスタート位置）を制御
-      - δi で cross-track 方向の振幅 (≈ a·δi) を制御
-      - δω で軌道面内の楕円向きを制御
-
-    Args:
-        chaser_elements: chaser (deputy) のケプラー軌道要素
-        distance_km: along-track 方向の半振幅 [km]（特性距離）
-        phase_deg: 初期位相 [deg]（0=along-track 先行, 90=radial 外側）
-        cross_track_km: cross-track 方向の振幅 [km]
-        orientation_deg: 軌道面内回転角 [deg]（δω で実現）
-
-    Returns:
-        target (debris) のケプラー軌道要素
-    """
-    a = chaser_elements.semi_major_axis
-
-    # 離心率の差分: radial振幅 = δe * a, along-track振幅 = 2 * δe * a
-    # distance_km = along-track半振幅 = 2 * δe * a  →  δe = distance / (2*a)
-    delta_e = distance_km / (2.0 * a)
-
-    # 位相制御: phase → δM₀
-    # football楕円の位相はM₀の差で制御
-    phase_rad = np.radians(phase_deg)
-
-    # cross-track: δi = cross_track_km / a
-    delta_i = cross_track_km / a
-
-    # 軌道面内回転角
-    delta_omega = np.radians(orientation_deg)
-
-    return OrbitalElements(
-        semi_major_axis=a,  # 同一半長軸 → secular drift なし
-        eccentricity=chaser_elements.eccentricity + delta_e,
-        inclination=chaser_elements.inclination + delta_i,
-        raan=chaser_elements.raan,
-        arg_periapsis=chaser_elements.arg_periapsis + delta_omega,
-        mean_anomaly_0=chaser_elements.mean_anomaly_0 + phase_rad,
-    )
-
-
 def compute_lvlh_frame(position_km: np.ndarray, velocity_km: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     位置・速度ベクトルから LVLH(RSW = RTN) 座標系の基底を計算
@@ -499,7 +488,11 @@ def compute_lvlh_frame(position_km: np.ndarray, velocity_km: np.ndarray) -> Tupl
       W = (r × v) / |r × v|   軌道面法線
       S = W × R               along-track（円軌道で速度方向と一致）
 
-    内部では yoshimulib の rv2oe → dcm_i2rtn 経由で同じ基底を得る。
+    r, v から直接構成する（rv2oe → dcm_i2rtn 経由にしない）。
+    dcm_i2rtn(Ω, i, ω, f) は円軌道 e = 0 で ω と f が個別に定義されない
+    （ω + f のみ有意）ため、rv2oe が返す ω/f の分配次第で基底が壊れる。
+    直接構成なら e = 0 でも正しく、非特異ケース (e ≠ 0) では従来実装と
+    厳密に一致する（回帰検証済み: e = 0.3 で行列差ノルム < 1e-9）。
     HCW 方程式で扱う相対運動の基準フレーム。
 
     Args:
@@ -509,10 +502,15 @@ def compute_lvlh_frame(position_km: np.ndarray, velocity_km: np.ndarray) -> Tupl
     Returns:
         R, S, W: それぞれ ECI 座標で表した RTN 単位基底ベクトル
     """
-    oe = rv2oe(position_km.reshape(1, 3), velocity_km.reshape(1, 3), EARTH_MU)
-    # dcm_i2rtn(Ω, i, ω, f) の各行が R, S, W
-    C = dcm_i2rtn(oe[0, 3], oe[0, 2], oe[0, 4], oe[0, 5])
-    return C[0].copy(), C[1].copy(), C[2].copy()
+    r = np.asarray(position_km, dtype=float).reshape(3)
+    v = np.asarray(velocity_km, dtype=float).reshape(3)
+
+    R_vec = r / np.linalg.norm(r)              # radial 外向き
+    h = np.cross(r, v)                          # 比角運動量ベクトル
+    W_vec = h / np.linalg.norm(h)               # 軌道面法線
+    S_vec = np.cross(W_vec, R_vec)              # along-track（既に単位長）
+    S_vec = S_vec / np.linalg.norm(S_vec)       # 数値誤差の保険
+    return R_vec, S_vec, W_vec
 
 
 def compute_target_position_km(lat_deg: float, lon_deg: float, alt_km: float) -> np.ndarray:

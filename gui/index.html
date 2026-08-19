@@ -1,0 +1,2413 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mRender GUI — 衛星軌道レンダリング</title>
+<style>
+:root {
+  --bg: #0b0e14; --panel: #131722; --panel2: #1a2030; --border: #2a3348;
+  --text: #dbe2f0; --dim: #8a94ab; --accent: #4f8ef7; --accent2: #7fd0ff;
+  --ok: #3fca7a; --warn: #f7b84f; --err: #f76a6a;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font-family: "Hiragino Sans", "Noto Sans JP", -apple-system, sans-serif;
+  font-size: 13.5px; line-height: 1.5;
+}
+header {
+  display: flex; align-items: baseline; gap: 14px;
+  padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 10;
+}
+header h1 { font-size: 17px; margin: 0; letter-spacing: .04em; }
+header .sub { color: var(--dim); font-size: 12px; }
+main { display: grid; grid-template-columns: minmax(430px, 560px) 1fr; gap: 0; }
+#left { border-right: 1px solid var(--border); min-height: calc(100vh - 50px); }
+#right { padding: 16px 20px; min-width: 0; }
+
+/* verb タブ */
+#verbTabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 16px 4px; }
+#verbTabs button {
+  background: var(--panel2); color: var(--dim); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 10px; cursor: pointer; font-size: 12.5px;
+}
+#verbTabs button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+#verbDesc { padding: 2px 18px 6px; color: var(--dim); font-size: 12px; }
+
+/* プリセットバー */
+#presetBar {
+  display: flex; gap: 8px; align-items: center; padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+}
+#presetBar select { flex: 1; }
+
+/* フォーム */
+#form { padding: 8px 16px 4px; }
+details.section {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  margin: 8px 0; overflow: hidden;
+}
+details.section > summary {
+  cursor: pointer; padding: 8px 12px; font-weight: 600; user-select: none;
+  background: var(--panel2); font-size: 13px;
+}
+.fields { padding: 8px 12px; display: grid; gap: 7px; }
+.field { display: grid; grid-template-columns: 172px 1fr; align-items: center; gap: 8px; }
+.field label { color: var(--dim); font-size: 12.5px; }
+.field .help { grid-column: 2; color: #5f6b84; font-size: 11px; margin-top: -3px; }
+input[type=text], input[type=number], select, textarea {
+  background: #0e1320; color: var(--text); border: 1px solid var(--border);
+  border-radius: 5px; padding: 5px 8px; font-size: 13px; width: 100%;
+  font-family: inherit;
+}
+textarea { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); }
+.vec { display: flex; gap: 5px; }
+.vec input { width: 100%; }
+
+/* フォーム未対応キーの透過表示 */
+#extraSection > summary { color: var(--accent2); }
+#extraKeysText {
+  background: #0a0d15; border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; margin: 0; font-size: 11.5px; line-height: 1.55;
+  max-height: 220px; overflow: auto; color: #9fb0cc; white-space: pre-wrap;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+#extraKeysBar { display: flex; gap: 8px; align-items: center; }
+
+/* アクションバー */
+#actions {
+  position: sticky; bottom: 0;
+  background: linear-gradient(transparent, var(--bg) 30%);
+  padding: 16px 16px 12px; display: flex; gap: 8px; flex-wrap: wrap;
+}
+@media (max-width: 1000px) {
+  main { grid-template-columns: 1fr; }
+  #left { border-right: none; min-height: unset; }
+}
+button.primary {
+  background: var(--accent); border: none; color: #fff; font-weight: 700;
+  padding: 9px 18px; border-radius: 7px; cursor: pointer; font-size: 14px;
+}
+button.primary:hover { background: #629af8; }
+button.ghost {
+  background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+  padding: 8px 12px; border-radius: 7px; cursor: pointer;
+}
+#status { padding: 4px 18px; font-size: 12.5px; color: var(--warn); min-height: 20px; }
+
+/* 右側: ジョブ・ラン */
+h2 { font-size: 14px; margin: 14px 0 8px; color: var(--accent2); letter-spacing: .05em; }
+.job {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; margin-bottom: 10px;
+}
+.job .head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.badge { padding: 1px 8px; border-radius: 10px; font-size: 11.5px; font-weight: 600; }
+.badge.running { background: #24457e; color: var(--accent2); }
+.badge.done { background: #1d4a31; color: var(--ok); }
+.badge.error { background: #542626; color: var(--err); }
+.progress { height: 8px; background: #0e1320; border-radius: 4px; margin: 8px 0; overflow: hidden; }
+.progress > div { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width .5s; }
+.job img.frame { max-width: 100%; border-radius: 6px; border: 1px solid var(--border); margin-top: 6px; }
+.job pre {
+  background: #0a0d15; border-radius: 6px; padding: 8px; font-size: 11px;
+  max-height: 180px; overflow: auto; color: #9fb0cc; white-space: pre-wrap;
+}
+.runs { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.run {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px; font-size: 11.5px;
+}
+.run img { width: 100%; border-radius: 5px; display: block; background: #000; aspect-ratio: 4/3; object-fit: cover; }
+.run .nm { color: var(--dim); word-break: break-all; margin-top: 5px; }
+.run a { color: var(--accent2); }
+/* ライブプレビュー（relative verb 専用） */
+#livePanel { margin-bottom: 10px; }
+.live-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+button.mini {
+  background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+  padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 12px;
+}
+button.mini.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+button.mini:disabled { opacity: .42; cursor: default; }
+#liveSunAngle:disabled { opacity: .45; }
+.live-view { position: relative; }
+#liveImg {
+  display: block; width: 100%; background: #000;
+  border: 1px solid var(--border); border-radius: 8px;
+  cursor: grab; user-select: none; -webkit-user-drag: none;
+}
+#liveImg.dragging { cursor: grabbing; }
+body.live-dragging, body.live-dragging * { user-select: none !important; cursor: grabbing !important; }
+.live-quality {
+  position: absolute; top: 8px; right: 8px; display: grid; gap: 4px;
+  background: rgba(11,14,20,.85); border: 1px solid var(--border);
+  border-radius: 7px; padding: 6px 8px; font-size: 11px; color: var(--dim);
+}
+.live-quality label { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.live-quality select, .live-quality input[type=number] { width: 72px; padding: 2px 4px; font-size: 11px; }
+.live-quality input[type=checkbox] { width: 14px; height: 14px; }
+.live-overlay {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  text-align: center; padding: 12px; color: var(--accent2); font-size: 12.5px;
+  background: rgba(11,14,20,.6); border-radius: 8px; pointer-events: none;
+}
+.live-status { font-size: 11.5px; color: var(--dim); margin: 7px 0 4px; display: flex; gap: 12px; flex-wrap: wrap; }
+.live-status .st-err { color: var(--err); }
+.live-status .st-ok { color: var(--ok); }
+.live-status .st-run { color: var(--accent2); }
+/* 直近フレームが簡易化プロファイルで描かれたときのバッジ（refined / preview と排他） */
+.live-status .st-simp {
+  color: var(--warn); border: 1px solid var(--warn); border-radius: 8px;
+  padding: 0 6px; font-size: 10.5px; font-weight: 600; line-height: 1.5;
+}
+.live-error {
+  background: #2a1717; border: 1px solid #6b3535; color: var(--err);
+  border-radius: 7px; padding: 8px 10px; margin-bottom: 8px; font-size: 12px;
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+}
+.live-error .msg { flex: 1; min-width: 200px; word-break: break-word; }
+.live-row { display: flex; gap: 8px; align-items: center; margin: 5px 0; font-size: 12px; }
+.live-row input[type=range] { flex: 1; accent-color: var(--accent); min-width: 80px; }
+.live-row .lab { color: var(--dim); white-space: nowrap; }
+.live-row .val { color: var(--text); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.live-hint { color: #5f6b84; font-size: 11px; }
+
+dialog {
+  background: var(--panel); color: var(--text); border: 1px solid var(--border);
+  border-radius: 10px; max-width: 720px; width: 90vw;
+}
+dialog pre { max-height: 60vh; overflow: auto; background: #0a0d15; padding: 10px; border-radius: 6px; font-size: 12px; }
+dialog::backdrop { background: rgba(0,0,0,.6); }
+.muted { color: var(--dim); }
+
+/* ---------------- AI アシスタント drawer ----------------
+ * 右端固定のノンモーダルパネル。既存の 2 カラムに被さるだけなので、
+ * 開いたまま左のフォーム・右のライブプレビューを操作できる。 */
+#aiBtn {
+  margin-left: auto; background: var(--panel2); border: 1px solid var(--border);
+  color: var(--text); padding: 5px 12px; border-radius: 7px; cursor: pointer;
+  font-size: 12.5px; font-family: inherit; align-self: center;
+}
+#aiBtn:hover { border-color: var(--accent); color: var(--accent2); }
+#aiBtn.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+#aiPanel {
+  position: fixed; top: 0; right: 0; bottom: 0; height: 100vh; width: min(420px, 96vw);
+  z-index: 40; background: var(--panel); border-left: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  transform: translateX(102%); transition: transform .18s ease;
+  box-shadow: -16px 0 44px -14px rgba(0,0,0,.75);
+}
+#aiPanel.open { transform: translateX(0); }
+.ai-h {
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+  background: var(--panel2); border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.ai-h .ai-title { font-weight: 700; font-size: 13.5px; letter-spacing: .03em; }
+.ai-badge { color: var(--warn); font-size: 11.5px; }
+@keyframes ai-pulse { 50% { opacity: .35; } }
+.ai-badge:not([hidden]) { animation: ai-pulse 1.2s ease-in-out infinite; }
+.ai-h .ai-x {
+  margin-left: auto; border: 0; background: transparent; color: var(--dim);
+  font-size: 19px; line-height: 1; cursor: pointer; padding: 0 4px;
+}
+.ai-h .ai-x:hover { color: var(--text); }
+.ai-banner {
+  margin: 8px 12px 0; padding: 7px 10px; border-radius: 7px; font-size: 12px;
+  background: #2a1717; border: 1px solid #6b3535; color: var(--err); flex-shrink: 0;
+}
+.ai-log {
+  flex: 1; min-height: 0; overflow-y: auto; padding: 12px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.ai-log:empty::before {
+  content: "プリセットの編集や設定の相談を日本語で。例:「oos_hubble.yaml の分離距離を 25 m にして」「この設定で露出が飛ぶ理由は？」";
+  color: var(--dim); font-size: 12px; line-height: 1.7; padding: 8px 4px;
+}
+.ai-msg { border-radius: 10px; padding: 8px 11px; font-size: 13px; line-height: 1.6; word-break: break-word; }
+.ai-msg.user { background: var(--accent); color: #fff; align-self: flex-end; white-space: pre-wrap; max-width: 88%; }
+.ai-msg.md { background: var(--panel2); align-self: stretch; }
+.ai-msg.md > :first-child { margin-top: 0; }
+.ai-msg.md > :last-child { margin-bottom: 0; }
+.ai-msg.md p { margin: 7px 0; }
+.ai-msg.md ul { margin: 7px 0; padding-left: 20px; }
+.ai-msg.md li { margin: 2px 0; }
+.ai-msg.md code {
+  background: #0a0d15; border-radius: 4px; padding: 1px 4px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; color: var(--accent2);
+}
+.ai-msg.md pre {
+  background: #0a0d15; border: 1px solid var(--border); border-radius: 7px;
+  padding: 8px 10px; overflow-x: auto; margin: 7px 0;
+}
+.ai-msg.md pre code { background: none; padding: 0; color: #9fb0cc; }
+.ai-msg.tool {
+  color: var(--dim); font-size: 11.5px; padding: 0 4px; flex-shrink: 0;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ai-msg.info { color: var(--dim); font-size: 11.5px; text-align: center; padding: 2px; }
+.ai-msg.err { border: 1px solid var(--err); color: var(--err); font-size: 12px; white-space: pre-wrap; }
+/* 実行中インジケータ（ログ末尾に常駐: 現在の活動 + 経過秒 + 停止） */
+.ai-run {
+  display: flex; align-items: center; gap: 8px; color: var(--dim);
+  font-size: 12px; padding: 4px 6px; flex-shrink: 0;
+}
+.ai-run .ai-run-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ai-run .ai-run-s {
+  margin-left: auto; flex-shrink: 0; font-size: 10.5px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.ai-run .ai-run-x {
+  flex-shrink: 0; border: 1px solid var(--border); background: var(--panel2);
+  color: var(--text); border-radius: 6px; padding: 1px 7px; cursor: pointer; font-size: 11.5px;
+}
+.ai-run .ai-run-x:hover { border-color: var(--err); color: var(--err); }
+.ai-dots { display: inline-flex; gap: 3px; flex-shrink: 0; }
+.ai-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: ai-dot 1.2s infinite ease-in-out; }
+.ai-dots i:nth-child(2) { animation-delay: .2s; }
+.ai-dots i:nth-child(3) { animation-delay: .4s; }
+@keyframes ai-dot { 0%,80%,100% { opacity: .25; transform: scale(.8); } 40% { opacity: 1; transform: scale(1); } }
+.ai-foot {
+  border-top: 1px solid var(--border); padding: 10px 12px; flex-shrink: 0;
+  display: flex; flex-direction: column; gap: 8px; background: var(--bg);
+}
+.ai-ctx { color: var(--dim); font-size: 12px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+#aiText {
+  width: 100%; background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  border-radius: 8px; padding: 8px 10px; font-size: 13px; resize: vertical;
+  min-height: 58px; font-family: inherit;
+}
+#aiText:focus { outline: none; border-color: var(--accent); }
+.ai-btns { display: flex; align-items: center; gap: 8px; }
+.ai-btns .primary { padding: 7px 16px; font-size: 13px; }
+.ai-btns .primary:disabled { opacity: .5; cursor: default; }
+.ai-note { color: var(--dim); font-size: 11px; margin-left: auto; font-family: ui-monospace, Menlo, monospace; }
+.ai-opts { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 11.5px; flex-wrap: wrap; }
+.ai-opts select {
+  background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; font-size: 11.5px; padding: 3px 4px; width: auto; max-width: 150px;
+}
+.ai-opts button.mini { margin-left: auto; }
+
+#toast {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 60;
+  background: var(--ok); color: #04160c; font-weight: 600; padding: 8px 16px;
+  border-radius: 8px; font-size: 13px; box-shadow: 0 8px 26px rgba(0,0,0,.55);
+  opacity: 0; pointer-events: none; transition: opacity .2s;
+}
+#toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>mRender GUI</h1>
+  <span class="sub">Mitsuba 3 衛星軌道レンダリング — クリックで設定して「レンダリング開始」</span>
+  <span class="sub" id="machineBar" style="display:none"
+        title="レンダリング（バッチ・ライブプレビュー共通）を実行するマシン。リモートのジョブ結果は runs/ に自動ミラーされる">
+    実行マシン: <select id="machineSel"></select>
+  </span>
+  <button id="aiBtn" title="AI アシスタントを開く / 閉じる">🤖 AI</button>
+</header>
+<main>
+  <div id="left">
+    <nav id="verbTabs"></nav>
+    <div id="verbDesc"></div>
+    <div id="presetBar">
+      <span class="muted">プリセット:</span>
+      <select id="presetSelect"><option value="">（選択して読み込み）</option></select>
+      <button class="ghost" id="loadPresetBtn">読み込み</button>
+    </div>
+    <div id="status"></div>
+    <div id="form"></div>
+    <div id="actions">
+      <button class="primary" id="renderBtn">▶ レンダリング開始</button>
+      <button class="ghost" id="previewBtn">1フレームプレビュー</button>
+      <button class="ghost" id="yamlBtn">YAML 表示</button>
+      <button class="ghost" id="saveBtn">プリセット保存</button>
+    </div>
+  </div>
+  <div id="right">
+    <section id="livePanel" style="display:none">
+      <h2>ライブプレビュー <span class="muted" id="liveVerbLabel" style="font-size:12px; letter-spacing:0"></span></h2>
+      <div class="live-bar">
+        <button class="mini" id="liveToggle">ライブプレビュー ON</button>
+        <button class="mini" id="liveCamReset" style="display:none"
+                title="camera_origin / camera_target / camera_up の上書きを消して view_mode 既定のカメラに戻す">カメラ上書き解除</button>
+        <button class="mini" id="liveStopWorker" title="常駐 Mitsuba ワーカーを終了する">ワーカー停止</button>
+        <span class="live-hint">左ドラッグ=オービット / ホイール=ドリー / Shift+ドラッグ=パン</span>
+        <span class="live-hint" id="liveCamHint" style="color:var(--warn)"></span>
+      </div>
+      <div id="liveBody" style="display:none">
+        <div class="live-error" id="liveError" style="display:none">
+          <span class="msg" id="liveErrorMsg"></span>
+          <button class="mini" id="liveRetry">再試行</button>
+        </div>
+        <div class="live-view">
+          <img id="liveImg" alt="ライブプレビュー" draggable="false">
+          <div class="live-quality">
+            <label>解像度 <select id="liveScale">
+              <option value="0.25">25%</option>
+              <option value="0.5" selected>50%</option>
+              <option value="1">100%</option>
+            </select></label>
+            <label>spp <input type="number" id="liveSpp" min="1" step="1" value="4"></label>
+            <label>refine spp <input type="number" id="liveRefineSpp" min="1" step="1" value="32"></label>
+            <label>リファイン <input type="checkbox" id="liveRefine" checked></label>
+            <label title="ドラッグ・ホイール・タイムライン操作の最中だけ、大気/雲/夜光/星空を切って低バウンスで描きます（手を離すと通常品質で描き直します）">簡易操作 <input type="checkbox" id="liveSimplify" checked></label>
+          </div>
+          <div class="live-overlay" id="liveOverlay">ワーカー起動中…</div>
+        </div>
+        <div class="live-hint" id="liveVerbNote" style="display:none">
+          ライブ表示はシーン画像のみです。光度曲線 CSV は本番実行（レンダリング開始）で出力されます。
+        </div>
+        <div class="live-status" id="liveStatus"></div>
+        <div class="live-row">
+          <button class="mini" id="livePlay" title="再生 / 一時停止">▶</button>
+          <span class="lab">フレーム</span>
+          <input type="range" id="liveFrame" min="0" max="29" step="1" value="0">
+          <span class="val" id="liveFrameLabel">0 / 29</span>
+        </div>
+        <div id="liveSunBox">
+          <div id="liveSunVec">
+            <div class="live-row">
+              <span class="lab">太陽 方位</span>
+              <input type="range" id="liveSunAz" min="-180" max="180" step="1" value="0">
+              <span class="val" id="liveSunAzLabel">0°</span>
+            </div>
+            <div class="live-row">
+              <span class="lab">太陽 仰角</span>
+              <input type="range" id="liveSunEl" min="-90" max="90" step="1" value="0">
+              <span class="val" id="liveSunElLabel">0°</span>
+            </div>
+            <div class="live-hint">太陽スライダーは「太陽光の進行方向」ベクトル欄と双方向に同期します（Y 軸を上とした方位/仰角）。</div>
+          </div>
+          <div id="liveSunAngle_wrap" style="display:none">
+            <div class="live-row">
+              <span class="lab">太陽 方位</span>
+              <input type="range" id="liveSunAngle" min="-180" max="180" step="1" value="0">
+              <span class="val" id="liveSunAngleLabel">自動</span>
+              <button class="mini" id="liveSunAngleAuto" style="display:none"
+                      title="sun_angle 欄を空にして天文学的な自動計算へ戻す">自動に戻す</button>
+            </div>
+            <div class="live-hint">「太陽方位 [deg]」欄と同期します。空欄＝天文学的自動計算（自動）。</div>
+          </div>
+        </div>
+      </div>
+    </section>
+    <h2>実行中 / 完了ジョブ</h2>
+    <div id="jobs"><p class="muted">まだジョブがありません。左のフォームで設定して「レンダリング開始」を押してください。</p></div>
+    <h2>過去のラン (runs/)</h2>
+    <div id="runsList" class="runs"></div>
+  </div>
+</main>
+
+<!-- ---------------- AI アシスタント drawer ---------------- -->
+<aside id="aiPanel" aria-hidden="true">
+  <div class="ai-h">
+    <span class="ai-title">🤖 AI アシスタント</span>
+    <span class="ai-badge" id="aiBadge" hidden>実行中…</span>
+    <button class="ai-x" id="aiClose" title="閉じる (Esc)">×</button>
+  </div>
+  <div class="ai-banner" id="aiBanner" style="display:none"></div>
+  <div class="ai-log" id="aiLog"></div>
+  <div class="ai-foot">
+    <label class="ai-ctx" title="ON にすると、送信時に現在のフォーム内容を YAML 化して一緒に渡します">
+      <input type="checkbox" id="aiCtx" checked> 現在の GUI 設定を渡す
+    </label>
+    <textarea id="aiText" rows="3" placeholder="AI への指示…  (⌘/Ctrl+Enter で送信)"></textarea>
+    <div class="ai-btns">
+      <button class="primary" id="aiSend">送信</button>
+      <span class="ai-note" id="aiNote"></span>
+    </div>
+    <div class="ai-opts">
+      <label title="このセッションで使うモデル（未指定なら CLI 設定値）">
+        <select id="aiModel">
+          <option value="">デフォルト (settings)</option>
+          <optgroup label="Claude" id="aiModelClaude">
+            <option value="claude-opus-5">opus 5</option>
+            <option value="claude-sonnet-5">sonnet 5</option>
+          </optgroup>
+          <optgroup label="Grok" id="aiModelGrok">
+            <option value="grok-4.6">grok 4.6</option>
+            <option value="grok-4.6-fast">grok 4.6 fast</option>
+          </optgroup>
+        </select>
+      </label>
+      <label title="reasoning effort（未指定なら CLI 設定値）">
+        <select id="aiEffort">
+          <option value="">デフォルト</option>
+          <option value="low">low</option>
+          <option value="medium">medium</option>
+          <option value="high">high</option>
+          <option value="xhigh">xhigh</option>
+          <option value="max">max</option>
+        </select>
+      </label>
+      <button class="mini" id="aiNew" title="セッションを捨てて新しい会話を始める">新規会話</button>
+    </div>
+  </div>
+</aside>
+<div id="toast"></div>
+
+<dialog id="yamlDialog">
+  <h3 style="margin-top:0">生成される設定 YAML</h3>
+  <p class="muted" id="cliHint"></p>
+  <pre id="yamlText"></pre>
+  <form method="dialog" style="text-align:right"><button class="ghost">閉じる</button></form>
+</dialog>
+
+<script>
+'use strict';
+let STATE = null;           // /api/state のレスポンス
+let currentVerb = 'render';
+const formValues = {};      // verb -> {key: DOM要素 or 値取得関数}
+const pollTimers = {};
+
+/* フォームに対応欄が無いプリセットキーの控え（verb -> {key: value}）。
+ * GUI のフォームは各 verb のキー空間の部分集合しか持たないので、これが無いと
+ * プリセット読込 → レンダ/ライブプレビューの往復で earth_day_texture や fps 等が
+ * 黙って脱落し、CLI 実行と別の画になる。collect() で「先に敷いてフォーム値で
+ * 上書き」する形で全経路（レンダ開始 / compose / ライブ更新 / プリセット保存 /
+ * AI コンテキスト）へ透過させる。 */
+const EXTRA_KEYS = {};      // verb -> {key: value}
+
+const $ = (sel) => document.querySelector(sel);
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+function setStatus(msg, isError) {
+  const el = $('#status');
+  el.textContent = msg || '';
+  el.style.color = isError ? 'var(--err)' : 'var(--warn)';
+}
+
+/* ---------------- フォーム構築 ---------------- */
+function fileOptions(kind) {
+  const files = (STATE.files[kind] || []);
+  return files;
+}
+
+function buildField(field, defaults) {
+  const wrap = document.createElement('div');
+  wrap.className = 'field';
+  const label = document.createElement('label');
+  label.textContent = field.label;
+  label.title = field.key;
+  wrap.appendChild(label);
+
+  const dflt = defaults[field.key];
+  let getter;
+
+  if (field.type === 'bool') {
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = !!dflt;
+    wrap.appendChild(input);
+    getter = () => input.checked;
+    getter.set = (v) => { input.checked = !!v; };
+  } else if (field.type === 'select') {
+    const sel = document.createElement('select');
+    for (const opt of field.options) {
+      const o = document.createElement('option');
+      o.value = opt; o.textContent = opt === '' ? '（なし）' : opt;
+      sel.appendChild(o);
+    }
+    if (dflt != null) sel.value = String(dflt);
+    wrap.appendChild(sel);
+    getter = () => sel.value === '' ? null : sel.value;
+    getter.set = (v) => { sel.value = v == null ? '' : String(v); };
+  } else if (field.type === 'file') {
+    const input = document.createElement('input');
+    input.type = 'text';
+    const listId = 'dl_' + field.kind;
+    input.setAttribute('list', listId);
+    input.placeholder = field.optional ? '（未指定）' : '';
+    if (dflt != null) input.value = String(dflt);
+    if (!document.getElementById(listId)) {
+      const dl = document.createElement('datalist');
+      dl.id = listId;
+      for (const f of fileOptions(field.kind)) {
+        const o = document.createElement('option'); o.value = f; dl.appendChild(o);
+      }
+      document.body.appendChild(dl);
+    }
+    wrap.appendChild(input);
+    getter = () => input.value.trim() === '' ? null : input.value.trim();
+    getter.set = (v) => { input.value = v == null ? '' : String(v); };
+  } else if (field.type === 'vec3' || field.type === 'vec4') {
+    const n = field.type === 'vec3' ? 3 : 4;
+    const box = document.createElement('div');
+    box.className = 'vec';
+    const cells = [];
+    for (let i = 0; i < n; i++) {
+      const c = document.createElement('input');
+      c.type = 'number'; c.step = 'any';
+      if (Array.isArray(dflt)) c.value = dflt[i];
+      cells.push(c); box.appendChild(c);
+    }
+    wrap.appendChild(box);
+    getter = () => {
+      const vals = cells.map(c => c.value.trim());
+      if (vals.every(v => v === '')) return null;
+      return vals.map(v => v === '' ? 0 : Number(v));
+    };
+    getter.set = (v) => {
+      if (!Array.isArray(v)) { cells.forEach(c => c.value = ''); return; }
+      cells.forEach((c, i) => { c.value = v[i] != null ? v[i] : ''; });
+    };
+  } else if (field.type === 'yaml') {
+    const ta = document.createElement('textarea');
+    ta.rows = field.rows || 6;
+    ta.placeholder = field.placeholder || '';
+    if (dflt != null && typeof dflt === 'object') ta.value = jsyamlDump(dflt);
+    wrap.appendChild(ta);
+    getter = () => ta.value;
+    getter.isYaml = true;
+    getter.set = (v) => {
+      if (v == null) { ta.value = ''; }
+      else if (typeof v === 'string') { ta.value = v; }
+      else { ta.value = jsyamlDump(v); }
+    };
+  } else { // int / float / str
+    const input = document.createElement('input');
+    input.type = (field.type === 'int' || field.type === 'float') ? 'number' : 'text';
+    if (field.type === 'float') input.step = field.step || 'any';
+    if (field.type === 'int') input.step = '1';
+    input.placeholder = field.optional ? '（未指定=デフォルト）' : '';
+    if (dflt != null) input.value = String(dflt);
+    wrap.appendChild(input);
+    getter = () => {
+      const v = input.value.trim();
+      if (v === '') return null;
+      return (field.type === 'int') ? parseInt(v, 10)
+           : (field.type === 'float') ? Number(v) : v;
+    };
+    getter.set = (v) => { input.value = v == null ? '' : String(v); };
+  }
+
+  if (field.help) {
+    const help = document.createElement('div');
+    help.className = 'help';
+    help.textContent = field.help;
+    wrap.appendChild(help);
+  }
+  return { wrap, getter };
+}
+
+/* ごく簡易な JS→YAML ダンプ（dict/textarea 初期化用） */
+function jsyamlDump(obj, indent) {
+  indent = indent || 0;
+  const pad = '  '.repeat(indent);
+  if (obj === null) return 'null';
+  if (Array.isArray(obj)) {
+    return obj.map(v => pad + '- ' + (typeof v === 'object' && v !== null
+      ? '\n' + jsyamlDump(v, indent + 1) : jsScalar(v))).join('\n');
+  }
+  if (typeof obj === 'object') {
+    return Object.entries(obj).map(([k, v]) => {
+      if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+        return pad + k + ':\n' + jsyamlDump(v, indent + 1);
+      }
+      if (Array.isArray(v)) {
+        if (v.every(x => typeof x !== 'object')) return pad + k + ': [' + v.map(jsScalar).join(', ') + ']';
+        return pad + k + ':\n' + jsyamlDump(v, indent + 1);
+      }
+      return pad + k + ': ' + jsScalar(v);
+    }).join('\n');
+  }
+  return pad + jsScalar(obj);
+}
+function jsScalar(v) {
+  if (v === null) return 'null';
+  if (typeof v === 'string' && /[:{}\[\],#&*?|>'"%@`]/.test(v)) return JSON.stringify(v);
+  return String(v);
+}
+
+function buildForm(verb) {
+  const schema = STATE.verbs[verb];
+  const formEl = $('#form');
+  formEl.innerHTML = '';
+  formValues[verb] = {};
+  schema.sections.forEach((section, idx) => {
+    const det = document.createElement('details');
+    det.className = 'section';
+    det.open = idx < 3;
+    const sum = document.createElement('summary');
+    sum.textContent = section.title;
+    det.appendChild(sum);
+    const fieldsBox = document.createElement('div');
+    fieldsBox.className = 'fields';
+    for (const field of section.fields) {
+      const { wrap, getter } = buildField(field, schema.defaults);
+      fieldsBox.appendChild(wrap);
+      formValues[verb][field.key] = getter;
+    }
+    det.appendChild(fieldsBox);
+    formEl.appendChild(det);
+  });
+  $('#verbDesc').textContent = schema.desc;
+  renderExtraKeys();
+  liveOnFormRebuilt();
+}
+
+/* 透過キーを先に敷き、フォーム値で上書きした fields を返す純粋関数。
+ * （DOM に触らないので node で単体検証できる。window.__mergeExtraKeys で公開） */
+function mergeExtraKeys(extras, fields) {
+  const out = {};
+  for (const [k, v] of Object.entries(extras || {})) {
+    if (v === null || v === undefined) continue;   // compose_config が捨てる値は載せない
+    out[k] = v;
+  }
+  return Object.assign(out, fields || {});
+}
+window.__mergeExtraKeys = mergeExtraKeys;
+
+function collect(verb) {
+  const fields = {}, yamlBlocks = {};
+  for (const [key, getter] of Object.entries(formValues[verb])) {
+    if (getter.isYaml) {
+      const text = getter();
+      if (text && text.trim()) yamlBlocks[key] = text;
+    } else {
+      const v = getter();
+      if (v !== null && v !== undefined) fields[key] = v;
+    }
+  }
+  // フォーム欄が無いキー（dict 値含む）はここで復活させる。dict は compose_config が
+  // advanced: へ包み、どちらのローダでも 1 段フラット化で元のキー名に戻る。
+  return { fields: mergeExtraKeys(EXTRA_KEYS[verb], fields), yaml_blocks: yamlBlocks };
+}
+
+/* ---------------- フォーム未対応キー（透過）の保持と表示 ---------------- */
+function setExtraKeys(verb, obj) {
+  EXTRA_KEYS[verb] = obj || {};
+  renderExtraKeys();
+}
+function clearExtraKeys(verb) {
+  delete EXTRA_KEYS[verb];
+}
+
+/* #form の末尾に折りたたみセクションを出す（読み取り専用の YAML 表示）。
+ * 透過キーが無い＝プリセット未読込 or クリア済みなら何も出さない。 */
+function renderExtraKeys() {
+  const formEl = $('#form');
+  if (!formEl) return;
+  const old = document.getElementById('extraSection');
+  const extras = EXTRA_KEYS[currentVerb] || {};
+  const keys = Object.keys(extras);
+  if (!keys.length) { if (old) old.remove(); return; }
+
+  let det = old;
+  if (!det) {
+    det = document.createElement('details');
+    det.className = 'section';
+    det.id = 'extraSection';
+    det.innerHTML = `
+      <summary>フォーム未対応のキー（そのまま適用） <span class="muted" id="extraKeysCount"></span></summary>
+      <div class="fields">
+        <div class="live-hint">
+          読み込んだプリセットのうち、GUI フォームに入力欄が無いキーです。編集はできませんが、
+          レンダリング・ライブプレビュー・プリセット保存にはこのまま引き継がれます。
+        </div>
+        <pre id="extraKeysText"></pre>
+        <div id="extraKeysBar"><button class="mini" id="extraKeysClear"
+             title="これらのキーを捨てて、フォームの内容だけで実行する">クリア</button></div>
+      </div>`;
+    det.querySelector('#extraKeysClear').onclick = () => {
+      clearExtraKeys(currentVerb);
+      renderExtraKeys();
+      setStatus('フォーム未対応のキーを破棄しました');
+      liveScheduleUpdate(0, false);
+    };
+  }
+  det.querySelector('#extraKeysCount').textContent = `${keys.length} 件`;
+  det.querySelector('#extraKeysText').textContent = jsyamlDump(extras);
+  formEl.appendChild(det);   // buildForm で作り直された時も末尾へ付け直す
+}
+
+/* ---------------- verb タブ・プリセット ---------------- */
+function buildTabs() {
+  const nav = $('#verbTabs');
+  nav.innerHTML = '';
+  for (const [verb, schema] of Object.entries(STATE.verbs)) {
+    const b = document.createElement('button');
+    b.textContent = schema.label;
+    b.dataset.verb = verb;
+    if (verb === currentVerb) b.classList.add('active');
+    b.onclick = () => {
+      currentVerb = verb;
+      // verb を変えるとフォームは既定値で作り直される。前の verb のプリセット由来の
+      // 透過キーを引きずらないよう、この verb の控えも捨てる（＝新規状態）。
+      clearExtraKeys(verb);
+      loadedPresetPath = '';
+      nav.querySelectorAll('button').forEach(x => x.classList.toggle('active', x === b));
+      buildForm(verb);
+    };
+    nav.appendChild(b);
+  }
+}
+
+function buildPresets() {
+  const sel = $('#presetSelect');
+  const keep = sel.value;
+  sel.innerHTML = '<option value="">（選択して読み込み）</option>';
+  for (const p of STATE.files.preset) {
+    const o = document.createElement('option');
+    o.value = p; o.textContent = p.replace('presets/', '');
+    sel.appendChild(o);
+  }
+  // 一覧を作り直しても選択は維持する（AI のプリセット更新で勝手に戻らないように）
+  if (keep && Array.from(sel.options).some(o => o.value === keep)) sel.value = keep;
+}
+
+/* presets/ の一覧をサーバから取り直して select を再構築（保存時・AI 編集後に使う） */
+async function refreshPresetList() {
+  const st = await api('/api/state');
+  STATE.files = st.files;
+  buildPresets();
+}
+
+// 直近にフォームへ読み込んだプリセットのパス（AI が同じファイルを編集したら再読込する）
+let loadedPresetPath = '';
+
+async function loadPreset(path) {
+  path = path || $('#presetSelect').value;
+  if (!path) { setStatus('プリセットを選択してください'); return; }
+  try {
+    const data = await api(`/api/preset?path=${encodeURIComponent(path)}&verb=${currentVerb}`);
+    const getters = formValues[currentVerb];
+    let applied = 0;
+    const extras = {};
+    for (const [key, value] of Object.entries(data.flat)) {
+      if (getters[key]) { getters[key].set(value); applied++; }
+      // フォームに欄が無いキー（dict 値も含む）は捨てずに控えて透過させる
+      else extras[key] = value;
+    }
+    setExtraKeys(currentVerb, extras);   // 読み込むたびに置き換え
+    loadedPresetPath = path;
+    const nExtra = Object.keys(extras).length;
+    setStatus(`${path} を読み込みました（${applied} 項目反映`
+      + (nExtra ? ` / ${nExtra} 項目はフォーム未対応のまま透過` : '') + '）');
+    liveOnFormRebuilt();
+    liveScheduleUpdate(0, false);
+  } catch (e) { setStatus(e.message, true); }
+}
+
+/* 画面下中央の一時通知 */
+let toastTimer = null;
+function toast(msg) {
+  const el = $('#toast');
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
+}
+
+/* ---------------- 実行マシン選択 ---------------- */
+function currentMachine() {
+  const sel = $('#machineSel');
+  return (sel && sel.value) || 'local';
+}
+
+async function initMachines() {
+  // gui_hosts.json にリモート定義がなければセレクタごと出さない
+  const d = await api('/api/machines');
+  if (!d.machines || d.machines.length <= 1) return;
+  const sel = $('#machineSel');
+  sel.innerHTML = d.machines.map(m =>
+    `<option value="${m}">${m === 'local' ? 'local（このマシン）' : m}</option>`).join('');
+  sel.value = d.live_machine || 'local';
+  $('#machineBar').style.display = '';
+  sel.onchange = async () => {
+    const machine = sel.value;
+    try {
+      // ライブプレビュー worker も同じマシンへ切替（次の更新で遅延起動）
+      await api('/api/live/machine', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ machine }),
+      });
+      toast(`実行マシン: ${machine}`);
+      if (LIVE.on && liveVerbUsable()) liveScheduleUpdate(0);
+    } catch (e) { toast('マシン切替エラー: ' + e.message); }
+  };
+}
+
+/* ---------------- 実行・ジョブ ---------------- */
+async function startRender(previewMode) {
+  const { fields, yaml_blocks } = collect(currentVerb);
+  let verb = currentVerb;
+  if (previewMode) {
+    if (verb === 'render' || verb === 'onboard' || verb === 'lightcurve') {
+      verb = 'preview';
+    } else {
+      fields.frames = 1;
+      fields.samples = Math.min(fields.samples || 64, 32);
+    }
+  }
+  try {
+    setStatus('起動中…');
+    const st = await api('/api/render', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ verb, name: fields.primary_name || verb, fields, yaml_blocks,
+                             machine: currentMachine() }),
+    });
+    setStatus(`ジョブ ${st.id} を開始（${st.run_dir}）`);
+    renderJob(st);
+    pollJob(st.id);
+  } catch (e) { setStatus(e.message, true); }
+}
+
+function renderJob(st) {
+  // ジョブカードは初回だけ DOM を構築し、以降は差分更新する。
+  // （innerHTML を毎ポーリング再構築すると <img> が作り直されて
+  //   読み込みの度に点滅＝チャタリングし、ログの開閉状態も失われる）
+  let el = document.getElementById(st.id);
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'job'; el.id = st.id;
+    el.innerHTML = `
+      <div class="head">
+        <strong class="j-verb"></strong>
+        <span class="muted j-name"></span>
+        <span class="badge j-badge"></span>
+        <span class="muted j-frames"></span>
+        <button class="ghost j-cancel">停止</button>
+        <span class="muted j-rundir" style="margin-left:auto"></span>
+      </div>
+      <div class="progress" style="display:none"><div style="width:0%"></div></div>
+      <img class="frame" style="display:none" alt="最新フレーム">
+      <div class="j-outputs"></div>
+      <details><summary class="muted">ログ</summary><pre class="j-log"></pre></details>
+    `;
+    el.querySelector('.j-cancel').onclick = () => cancelJob(st.id);
+    const jobs = $('#jobs');
+    if (jobs.querySelector('p')) jobs.innerHTML = '';
+    jobs.prepend(el);
+  }
+
+  const badgeClass = (st.status === 'running' || st.status === 'syncing') ? 'running'
+    : (st.status === 'done' ? 'done' : 'error');
+  el.querySelector('.j-verb').textContent = st.verb;
+  el.querySelector('.j-name').textContent =
+    st.name + (st.machine && st.machine !== 'local' ? ` @${st.machine}` : '');
+  const badge = el.querySelector('.j-badge');
+  badge.className = 'badge j-badge ' + badgeClass;
+  badge.textContent = st.status;
+  el.querySelector('.j-frames').textContent =
+    `${st.frames_done}${st.total_frames ? '/' + st.total_frames : ''} フレーム`;
+  el.querySelector('.j-cancel').style.display = st.status === 'running' ? '' : 'none';
+  el.querySelector('.j-rundir').textContent = st.run_dir;
+
+  const prog = el.querySelector('.progress');
+  if (st.progress != null) {
+    prog.style.display = '';
+    prog.firstElementChild.style.width = Math.round(st.progress * 100) + '%';
+  } else {
+    prog.style.display = 'none';
+  }
+
+  // 最新フレーム: パスが変わった時だけ、裏で読み込み完了してから src を差し替える
+  // （直接 src を書き換えると読み込み中に一瞬白抜けしてチラつく）
+  const img = el.querySelector('img.frame');
+  if (st.latest_frame && el.dataset.frame !== st.latest_frame) {
+    el.dataset.frame = st.latest_frame;
+    const url = `/api/file?path=${encodeURIComponent(st.latest_frame)}&t=${Date.now()}`;
+    const pre = new Image();
+    pre.onload = () => { img.src = url; img.style.display = ''; };
+    pre.src = url;
+  }
+
+  const outputs = (st.outputs && st.outputs.length)
+    ? st.outputs.map(o =>
+        `<a href="/api/file?path=${encodeURIComponent(o)}" target="_blank">${o.split('/').pop()}</a>`).join(' ')
+    : '';
+  const outBox = el.querySelector('.j-outputs');
+  if (outBox.dataset.html !== outputs) {
+    outBox.dataset.html = outputs;
+    outBox.innerHTML = outputs;
+  }
+
+  // <details> は再構築しない（開閉状態を保持）。中身のテキストだけ更新。
+  const log = el.querySelector('.j-log');
+  const tail = st.log_tail || '';
+  if (log.textContent !== tail) log.textContent = tail;
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+}
+
+function pollJob(id) {
+  if (pollTimers[id]) return;
+  pollTimers[id] = setInterval(async () => {
+    try {
+      const st = await api(`/api/job?id=${id}`);
+      renderJob(st);
+      if (st.status !== 'running' && st.status !== 'syncing') {
+        clearInterval(pollTimers[id]);
+        delete pollTimers[id];
+        loadRuns();
+      }
+    } catch (e) {
+      clearInterval(pollTimers[id]);
+      delete pollTimers[id];
+    }
+  }, 2000);
+}
+
+async function cancelJob(id) {
+  await api('/api/cancel', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  });
+}
+window.cancelJob = cancelJob;
+
+/* ---------------- YAML 表示・プリセット保存 ---------------- */
+async function showYaml() {
+  const { fields, yaml_blocks } = collect(currentVerb);
+  try {
+    const data = await api('/api/compose', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ verb: currentVerb, fields, yaml_blocks }),
+    });
+    $('#yamlText').textContent = data.yaml;
+    $('#cliHint').textContent = `CLI 相当: python mrender.py ${currentVerb} --config <この内容の.yaml>`;
+    $('#yamlDialog').showModal();
+  } catch (e) { setStatus(e.message, true); }
+}
+
+async function savePreset() {
+  const name = prompt('プリセット名（presets/<名前>.yaml に保存）:');
+  if (!name) return;
+  const { fields, yaml_blocks } = collect(currentVerb);
+  try {
+    const data = await api('/api/save_preset', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, fields, yaml_blocks }),
+    });
+    setStatus(`保存しました: ${data.saved}`);
+    await refreshPresetList();
+  } catch (e) { setStatus(e.message, true); }
+}
+
+/* ---------------- 過去ラン ---------------- */
+async function loadRuns() {
+  try {
+    const runs = await api('/api/runs');
+    const box = $('#runsList');
+    box.innerHTML = runs.length ? '' : '<p class="muted">まだランがありません。</p>';
+    for (const r of runs) {
+      const d = document.createElement('div');
+      d.className = 'run';
+      d.innerHTML = `
+        ${r.thumb ? `<a href="/api/file?path=${encodeURIComponent(r.thumb)}" target="_blank"><img loading="lazy" src="/api/file?path=${encodeURIComponent(r.thumb)}"></a>` : '<img>'}
+        <div class="nm">${r.name}</div>
+        <div class="muted">${r.frame_count} フレーム ${r.status ? '· ' + r.status : ''}</div>
+        ${r.video ? `<a href="/api/file?path=${encodeURIComponent(r.video)}" target="_blank">▶ 動画</a>` : ''}
+      `;
+      box.appendChild(d);
+    }
+  } catch (e) { /* runs 一覧の失敗は致命でない */ }
+}
+
+/* ---------------- ライブプレビュー（全 verb 対応） ----------------
+ * フォーム = 唯一の真実源。ビューポート操作は camera_origin / camera_target の
+ * 入力欄へ書き戻し、そこから /api/live/update を投げる。
+ * 常駐 Mitsuba ワーカー（gui_server がプロキシ）が ~0.3s で再レンダした PNG を
+ * 150ms ポーリングで取り込み、<img> を Blob URL で差し替える。
+ *
+ * verb 別の差分:
+ *   - relative / rotation : camera_* は必須フィールド。そのまま書き戻す。
+ *   - render 系（render / preview / onboard / lightcurve）:
+ *       camera_* は「上書き（オーバーライド）」用の任意フィールド。空欄のまま
+ *       ドラッグされたら /api/live/status の camera（ワーカーが解決した実カメラ）
+ *       をフォームへ書き込んでから操作する＝以後はオーバーライドが真実源。
+ *   - 太陽: relative は sun_direction ベクトル、render 系は sun_angle [deg]、
+ *       rotation はウィジェット非表示（シーンの太陽は固定）。
+ *   - タイムライン t 表示はフロントで再現せず /api/live/status の time_s を使う。
+ *
+ * 操作中の簡易描画:
+ *   ドラッグ / ホイールドリー / タイムラインのスクラブ・再生の最中は
+ *   liveSendUpdate(true)（＝interactive）で送る。「簡易操作」チェックが ON なら
+ *   quality.interactive=true を足し、ワーカーが簡易化プロファイル（大気/雲/夜光/
+ *   星空オフ・低バウンス・低解像度）で ~0.1-0.2 s 応答する。操作の終わり
+ *   （mouseup / ホイール停止 250ms / スライダー change / 再生停止）では
+ *   interactive なしで 1 発送り、通常品質 → 自動リファインへ戻す。
+ *   直近フレームが簡易化されていれば X-Live-Simplified ヘッダを見て「簡易」
+ *   バッジを出す（refined / preview とは排他）。
+ */
+const LIVE_CAMERA_OVERRIDE_VERBS = new Set(['render', 'preview', 'onboard', 'lightcurve']);
+const LIVE_NOTE_VERBS = {
+  lightcurve: true,   // ビューポート下に「画像のみ」注記を出す verb
+};
+const LIVE_POLL_MS = 150;
+const LIVE_DEBOUNCE_MS = 200;
+const LIVE_DRAG_MS = 33;   // カメラ高速パス（~20ms/フレーム）に合わせて ~30fps 送信
+const LIVE_WHEEL_STOP_MS = 250;   // ホイール停止後、通常品質で 1 発送るまでの待ち
+const LIVE_LS_SIMPLIFY = 'mrender.live.simplify';   // 「簡易操作」チェックの永続化
+const LIVE_ORBIT_DEG_PER_PX = 0.4;
+const LIVE_DOLLY_STEP = 1.1;
+const LIVE_MIN_DIST = 1e-4;
+
+const LIVE = {
+  on: false,
+  gen: -1,              // 表示中の画像の gen（-1 = まだ画像なし）
+  refined: false,
+  simplified: false,    // 表示中の画像が簡易化プロファイル（X-Live-Simplified）で描かれた
+  pendingRefine: false, // 未リファインの画像を表示中（304 を無視して取り直す）
+  blobUrl: null,
+  pollTimer: null,
+  polling: false,
+  tick: 0,
+  updateTimer: null,
+  inflight: false,
+  pending: false,
+  pendingInteractive: false,
+  frame: 0,
+  playing: false,
+  playTimer: null,
+  yamlKey: null,        // yaml_blocks のキャッシュキー
+  yamlDicts: {},        // deputy_parts 等の dict 値
+  yamlBlocks: {},
+  drag: null,
+  wheelTimer: null,     // ホイール停止検出（停止後に通常品質で 1 発）
+  started: false,       // /api/live/update が 1 度でも成功したか
+  failures: 0,
+  lastMs: null,
+  lastStatus: '',
+  lastError: '',
+  camWarn: '',          // カメラ操作まわりの一時警告
+  stale: false,         // 直近の /update が失敗＝ワーカーの画像は現設定と無関係
+  verb: null,          // 直近にライブ表示していた verb（切替検出用）
+  camera: null,         // /api/live/status の camera: ワーカーが解決した実カメラ
+  timeS: null,          // /api/live/status の time_s: 直近フレームの物理時刻 [s]
+};
+
+/* --- ベクトル小道具 --- */
+function vSub(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
+function vAdd(a, b) { return [a[0] + b[0], a[1] + b[1], a[2] + b[2]]; }
+function vMul(a, s) { return [a[0] * s, a[1] * s, a[2] * s]; }
+function vDot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+function vCross(a, b) {
+  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+}
+function vLen(a) { return Math.hypot(a[0], a[1], a[2]); }
+function vNorm(a, fallback) {
+  const n = vLen(a);
+  if (!isFinite(n) || n < 1e-12) return (fallback || [0, 1, 0]).slice();
+  return vMul(a, 1 / n);
+}
+
+/* --- フォーム値アクセス（現在の verb のフォームの getter を経由） --- */
+function liveGetters() { return formValues[currentVerb] || {}; }
+
+/* ライブパネルを出せる verb か（スキーマにフォームがあれば全 verb 対応） */
+function liveVerbUsable() {
+  return !!(STATE && STATE.verbs && STATE.verbs[currentVerb] && formValues[currentVerb]);
+}
+/* camera_* が「上書き」扱い（空欄あり得る）の verb か */
+function liveIsCamOverrideVerb() { return LIVE_CAMERA_OVERRIDE_VERBS.has(currentVerb); }
+
+/* フォーム欄の vec3。未入力（＝上書きなし）なら null を返す */
+function liveGetVecRaw(key) {
+  const g = liveGetters()[key];
+  const v = g ? g() : null;
+  if (Array.isArray(v) && v.length >= 3 && v.slice(0, 3).every(x => isFinite(Number(x)))) {
+    return v.slice(0, 3).map(Number);
+  }
+  return null;
+}
+
+function liveGetVec(key, fallback) {
+  const v = liveGetVecRaw(key);
+  return v !== null ? v : fallback.slice();
+}
+
+function liveSetVec(key, v) {
+  const g = liveGetters()[key];
+  if (!g || !g.set) return;
+  g.set(v.map(x => (isFinite(x) ? Number(Number(x).toFixed(6)) : 0)));
+}
+
+function liveGetNum(key, fallback) {
+  const g = liveGetters()[key];
+  const v = g ? g() : null;
+  const n = Number(v);
+  return (v != null && isFinite(n)) ? n : fallback;
+}
+
+/* --- 品質コントロール --- */
+function liveQuality() {
+  return {
+    scale: Number($('#liveScale').value) || 0.5,
+    spp: Math.max(1, parseInt($('#liveSpp').value, 10) || 4),
+    refine_spp: Math.max(1, parseInt($('#liveRefineSpp').value, 10) || 32),
+    refine: $('#liveRefine').checked,
+  };
+}
+function liveLowerScale(scale) { return scale > 0.5 ? 0.5 : 0.25; }
+
+/* 「操作中は簡易表示」。ON のとき、操作中の /update に quality.interactive=true を
+   足してワーカーへ簡易化プロファイル（大気/雲/夜光/星空オフ・低バウンス）を要求する。
+   OFF なら従来どおり「解像度を一段落とすだけ」。 */
+function liveSimplifyEnabled() {
+  const el = $('#liveSimplify');
+  return el ? !!el.checked : false;
+}
+function liveRestorePrefs() {
+  const el = $('#liveSimplify');
+  if (!el) return;
+  try {
+    const raw = localStorage.getItem(LIVE_LS_SIMPLIFY);
+    if (raw != null) el.checked = (raw === '1');
+  } catch (e) { /* private mode 等は既定値のまま */ }
+}
+function liveStorePrefs() {
+  try { localStorage.setItem(LIVE_LS_SIMPLIFY, liveSimplifyEnabled() ? '1' : '0'); }
+  catch (e) { /* quota / private mode は無視 */ }
+}
+
+/* --- エラー表示 --- */
+function liveSetError(msg, fatal) {
+  LIVE.lastError = msg || '';
+  $('#liveErrorMsg').textContent = msg || '';
+  $('#liveError').style.display = msg ? '' : 'none';
+  if (fatal) liveStopPolling();
+  liveRenderStatus();
+}
+function liveClearError() {
+  if (!LIVE.lastError) return;
+  LIVE.lastError = '';
+  $('#liveErrorMsg').textContent = '';
+  $('#liveError').style.display = 'none';
+  liveRenderStatus();
+}
+
+/* --- YAML ブロック → dict 値（テキストが変わった時だけ /api/compose を叩く） --- */
+async function liveEnsureYamlDicts(yamlBlocks) {
+  const key = currentVerb + '\u0000' + JSON.stringify(yamlBlocks || {});
+  if (key === LIVE.yamlKey) return LIVE.yamlDicts;
+  if (!Object.keys(yamlBlocks || {}).length) {
+    LIVE.yamlKey = key; LIVE.yamlDicts = {};
+    return LIVE.yamlDicts;
+  }
+  const data = await api('/api/compose', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ verb: currentVerb, fields: {}, yaml_blocks: yamlBlocks }),
+  });
+  const cfg = (data.config && typeof data.config === 'object')
+    ? data.config : liveParseYaml(data.yaml || '');
+  const dicts = {};
+  if (cfg && typeof cfg === 'object') {
+    // compose_config は dict 値を advanced: へ包むので取り出してトップレベルに戻す
+    if (cfg.advanced && typeof cfg.advanced === 'object') Object.assign(dicts, cfg.advanced);
+    for (const [k, v] of Object.entries(cfg)) {
+      if (k !== 'advanced' && v !== null && typeof v === 'object') dicts[k] = v;
+    }
+  }
+  LIVE.yamlKey = key;
+  LIVE.yamlDicts = dicts;
+  return dicts;
+}
+
+/* PyYAML safe_dump が吐くブロックスタイル YAML の最小パーサ。
+   （js-yaml を持ち込まないための限定実装。/api/compose の正規化出力のみが対象） */
+function liveParseYaml(text) {
+  const lines = [];
+  for (const raw of String(text || '').split('\n')) {
+    if (!raw.trim() || /^\s*#/.test(raw)) continue;
+    lines.push({ indent: raw.match(/^ */)[0].length, text: raw.trim() });
+  }
+  let pos = 0;
+
+  function splitFlow(s) {
+    const out = []; let depth = 0, cur = '', quote = null;
+    for (const ch of s) {
+      if (quote) { cur += ch; if (ch === quote) quote = null; continue; }
+      if (ch === '"' || ch === "'") { quote = ch; cur += ch; continue; }
+      if (ch === '[' || ch === '{') depth++;
+      else if (ch === ']' || ch === '}') depth--;
+      else if (ch === ',' && depth === 0) { out.push(cur.trim()); cur = ''; continue; }
+      cur += ch;
+    }
+    if (cur.trim()) out.push(cur.trim());
+    return out;
+  }
+
+  function scalar(s) {
+    s = String(s).trim();
+    if (s === '' || s === 'null' || s === '~') return null;
+    if (s === 'true') return true;
+    if (s === 'false') return false;
+    if (/^-?\d+$/.test(s)) return parseInt(s, 10);
+    if (/^-?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?$/.test(s)) return Number(s);
+    if (s.length >= 2 && s[0] === '"' && s.endsWith('"')) {
+      return s.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+    }
+    if (s.length >= 2 && s[0] === "'" && s.endsWith("'")) {
+      return s.slice(1, -1).replace(/''/g, "'");
+    }
+    if (s[0] === '[' && s.endsWith(']')) return splitFlow(s.slice(1, -1)).map(scalar);
+    if (s[0] === '{' && s.endsWith('}')) {
+      const o = {};
+      for (const part of splitFlow(s.slice(1, -1))) {
+        const m = part.match(/^(.*?):\s*(.*)$/);
+        if (m) o[String(scalar(m[1]))] = scalar(m[2]);
+      }
+      return o;
+    }
+    return s;
+  }
+
+  function parseNode(indent) {
+    if (pos >= lines.length || lines[pos].indent < indent) return null;
+    if (lines[pos].text === '-' || lines[pos].text.startsWith('- ')) {
+      const arr = [];
+      while (pos < lines.length && lines[pos].indent === indent
+             && (lines[pos].text === '-' || lines[pos].text.startsWith('- '))) {
+        const after = lines[pos].text.slice(1);
+        const rest = after.trim();
+        const contentIndent = indent + 1 + (after.length - after.replace(/^\s+/, '').length);
+        if (rest === '') {
+          pos++;
+          arr.push(pos < lines.length && lines[pos].indent > indent
+            ? parseNode(lines[pos].indent) : null);
+        } else if (/^(?:"[^"]*"|'[^']*'|[^:{[]+):(?:\s|$)/.test(rest)) {
+          // 「- key: value」= シーケンス要素のマップ。仮想行に置き換えて再帰
+          lines[pos] = { indent: contentIndent, text: rest };
+          arr.push(parseNode(contentIndent));
+        } else {
+          pos++;
+          arr.push(scalar(rest));
+        }
+      }
+      return arr;
+    }
+    const obj = {};
+    while (pos < lines.length && lines[pos].indent === indent) {
+      const line = lines[pos];
+      if (line.text === '-' || line.text.startsWith('- ')) break;
+      const m = line.text.match(/^(.*?):(?:\s+(.*))?$/);
+      if (!m) { pos++; continue; }
+      const key = String(scalar(m[1]));
+      const val = (m[2] || '').trim();
+      pos++;
+      if (val !== '') {
+        obj[key] = scalar(val);
+      } else {
+        const nxt = lines[pos];
+        const isDash = nxt && (nxt.text === '-' || nxt.text.startsWith('- '));
+        if (nxt && nxt.indent > indent) obj[key] = parseNode(nxt.indent);
+        else if (nxt && nxt.indent === indent && isDash) obj[key] = parseNode(indent);
+        else obj[key] = null;   // PyYAML の indentless sequence にも対応
+      }
+    }
+    return obj;
+  }
+
+  const root = parseNode(lines.length ? lines[0].indent : 0);
+  return (root && typeof root === 'object' && !Array.isArray(root)) ? root : {};
+}
+
+/* --- フォーム値の収集（既存 collect を再利用し dict 値をマージ） --- */
+async function liveCollectFields() {
+  const { fields, yaml_blocks } = collect(currentVerb);
+  LIVE.yamlBlocks = yaml_blocks;
+  const dicts = await liveEnsureYamlDicts(yaml_blocks);
+  return Object.assign({}, fields, dicts);
+}
+
+/* --- /api/live/update --- */
+function liveScheduleUpdate(delay, interactive) {
+  if (!LIVE.on || !liveVerbUsable()) return;
+  clearTimeout(LIVE.updateTimer);
+  LIVE.updateTimer = setTimeout(() => liveSendUpdate(interactive),
+    delay == null ? LIVE_DEBOUNCE_MS : delay);
+}
+
+async function liveSendUpdate(interactive) {
+  if (!LIVE.on || !liveVerbUsable()) return;
+  if (LIVE.inflight) {
+    LIVE.pending = true;
+    LIVE.pendingInteractive = interactive;
+    return;
+  }
+  LIVE.inflight = true;
+  const verb = currentVerb;
+  try {
+    const fields = await liveCollectFields();
+    const quality = liveQuality();
+    if (interactive) {
+      quality.scale = liveLowerScale(quality.scale);
+      // 「簡易操作」ON のときだけワーカーへ簡易化プロファイルを要求する。
+      // OFF のときはキー自体を送らない＝従来挙動（解像度を落とすだけ）。
+      if (liveSimplifyEnabled()) quality.interactive = true;
+    }
+    const res = await fetch('/api/live/update', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        verb, fields, frame: LIVE.frame, quality,
+        yaml_blocks: LIVE.yamlBlocks,   // バックエンドが自前で解決したい場合の保険
+      }),
+    });
+    if (!res.ok) {
+      let detail = res.statusText;
+      try { const d = await res.json(); if (d && d.error) detail = d.error; } catch (e) { /* noop */ }
+      // 400 = その verb がワーカー側でまだ未対応（バックエンド拡張の途中など）。
+      // 致命扱いにはせず、エラーバナーだけ出して UI は生かしておく。
+      const fatal = (res.status === 404 || res.status === 501);
+      throw Object.assign(
+        new Error(`ライブ更新に失敗しました (verb=${verb}, HTTP ${res.status}): ${detail}`),
+        { fatal, tagged: true });
+    }
+    await res.json().catch(() => ({}));
+    LIVE.started = true;
+    LIVE.stale = false;
+    liveClearError();
+    liveStartPolling();
+  } catch (e) {
+    // 更新が通らなかった間にワーカーが保持している画像は「別 verb / 古い設定」の
+    // 可能性があるので、次に成功するまで表示を差し替えない
+    LIVE.stale = true;
+    liveSetError(e.fatal
+      ? `${e.message} — ライブプレビュー API が使えません（サーバー側が未対応の可能性）。`
+      : (e.tagged ? e.message : `ライブ更新に失敗しました: ${e.message}`), !!e.fatal);
+  } finally {
+    LIVE.inflight = false;
+    if (LIVE.pending) {
+      LIVE.pending = false;
+      const iv = LIVE.pendingInteractive;
+      setTimeout(() => liveSendUpdate(iv), 0);
+    }
+    liveRenderStatus();
+  }
+}
+
+/* --- ポーリング --- */
+function liveStartPolling() {
+  if (LIVE.pollTimer || !LIVE.on) return;
+  LIVE.pollTimer = setInterval(livePoll, LIVE_POLL_MS);
+}
+function liveStopPolling() {
+  if (LIVE.pollTimer) { clearInterval(LIVE.pollTimer); LIVE.pollTimer = null; }
+}
+
+async function livePoll() {
+  // 注: document.hidden はここでは見ない。埋め込み WebView 等では常に
+  // hidden=true を返す環境があり、その場合ポーリングが一切走らなくなる。
+  // タブ非表示時の省電力は visibilitychange リスナー（タイマー停止）で行う。
+  if (!LIVE.on || LIVE.polling) return;
+  LIVE.polling = true;
+  try {
+    LIVE.tick++;
+    const knownGen = LIVE.pendingRefine ? -1 : LIVE.gen;
+    const res = await fetch(`/api/live/frame?known_gen=${knownGen}`, { cache: 'no-store' });
+    if (res.status === 304) { /* 変化なし */ }
+    else if (res.status === 404 || res.status === 502 || res.status === 503) {
+      // まだ 1 枚も出来ていない / ワーカー起動中。エラーではないので黙って待つ
+      // （エンドポイント自体の有無は /api/live/status で判定する）
+    } else if (!res.ok) {
+      liveSetError(`フレーム取得に失敗しました (HTTP ${res.status})`, false);
+    } else {
+      const gen = parseInt(res.headers.get('X-Live-Gen') || '0', 10);
+      const refined = liveHeaderBool(res.headers.get('X-Live-Refined'));
+      // 未対応バックエンド（ヘッダ無し）は false 扱い＝バッジを出さない
+      const simplified = liveHeaderBool(res.headers.get('X-Live-Simplified'));
+      const status = res.headers.get('X-Live-Status') || '';
+      const ms = res.headers.get('X-Live-Ms');
+      const blob = await res.blob();
+      if (!LIVE.stale) {
+        if (blob.size > 0) {
+          const url = URL.createObjectURL(blob);
+          $('#liveImg').src = url;
+          if (LIVE.blobUrl) URL.revokeObjectURL(LIVE.blobUrl);
+          LIVE.blobUrl = url;
+        }
+        LIVE.gen = isFinite(gen) ? gen : LIVE.gen;
+        LIVE.refined = refined;
+        LIVE.simplified = refined ? false : simplified;   // リファイン済みは常に通常品質
+        LIVE.lastStatus = status;
+        LIVE.lastMs = ms != null && ms !== '' ? Number(ms) : LIVE.lastMs;
+        LIVE.pendingRefine = !refined && status === 'rendering';
+        liveApplyHeaderError(res.headers.get('X-Live-Error'));
+        liveRenderStatus();
+      }
+    }
+    LIVE.failures = 0;
+    if (LIVE.tick % 4 === 0) await livePollStatus();
+  } catch (e) {
+    LIVE.failures = (LIVE.failures || 0) + 1;
+    const dead = LIVE.failures >= 5;   // 落ちているサーバーへの連打を止める
+    liveSetError(`ライブプレビューに接続できません: ${e.message}`
+      + (dead ? '（ポーリングを停止しました）' : ''), dead);
+  } finally {
+    LIVE.polling = false;
+  }
+}
+
+async function livePollStatus() {
+  try {
+    const res = await fetch('/api/live/status', { cache: 'no-store' });
+    if (!res.ok) {
+      if (res.status === 404) {
+        liveSetError('ライブプレビュー API (/api/live/status) がサーバーにありません。', true);
+      }
+      return;
+    }
+    const st = await res.json();
+    if (st.last_ms != null) LIVE.lastMs = Number(st.last_ms);
+    if (st.refined != null) LIVE.refined = !!st.refined;
+    // 注: simplified は /status からは取らない。「いま表示している画像が簡易化
+    // されているか」は画像と一緒に来る X-Live-Simplified だけが正しく、status は
+    // 「ワーカーの最新 PNG」を指すので、ポーリングの隙間で食い違ってバッジが
+    // 点滅する。refined 表示は簡易バッジより優先されるので混在もしない。
+    // ワーカーが解決した実カメラ（シーン単位）。render 系のギズモ操作の初期値になる
+    if (st.camera && typeof st.camera === 'object') {
+      LIVE.camera = st.camera;
+      liveUpdateCamHint();
+    }
+    if (st.time_s != null && isFinite(Number(st.time_s))) {
+      const t = Number(st.time_s);
+      if (LIVE.timeS !== t) { LIVE.timeS = t; liveSyncTimeline(); }
+    }
+    const err = LIVE.started ? st.error : null;   // 起動前の「worker not running」は無視
+    LIVE.lastStatus = err ? 'error' : (st.rendering ? 'rendering' : 'idle');
+    if (st.gen_rendered != null && st.gen_requested != null
+        && st.gen_rendered === st.gen_requested && !st.rendering) {
+      LIVE.pendingRefine = false;
+    }
+    if (err) liveSetError(`ワーカーエラー: ${err}`, false);
+    else liveClearError();
+    liveRenderStatus();
+  } catch (e) { /* status 取得の失敗は致命でない */ }
+}
+
+/* ヘッダの真偽値（"1" / "true" / "yes" のいずれでも真とみなす） */
+function liveHeaderBool(raw) {
+  const s = String(raw == null ? '' : raw).trim().toLowerCase();
+  return s === '1' || s === 'true' || s === 'yes' || s === 'on';
+}
+
+function liveApplyHeaderError(raw) {
+  if (!raw) { liveClearError(); return; }
+  let msg = raw;
+  try { msg = decodeURIComponent(raw); } catch (e) { /* そのまま */ }
+  liveSetError(`ワーカーエラー: ${msg}`, false);
+}
+
+/* --- ステータス行・オーバーレイ --- */
+function liveRenderStatus() {
+  if (!LIVE.on) return;
+  const q = liveQuality();
+  const parts = [];
+  parts.push(`gen ${LIVE.gen < 0 ? '—' : LIVE.gen}`);
+  parts.push(LIVE.lastMs != null ? `${Math.round(LIVE.lastMs)} ms` : '— ms');
+  const statusLabel = LIVE.lastStatus === 'rendering' ? '<span class="st-run">レンダ中</span>'
+    : LIVE.lastStatus === 'error' ? '<span class="st-err">エラー</span>'
+    : LIVE.lastStatus === 'idle' ? '<span class="st-ok">待機</span>' : '—';
+  parts.push(statusLabel);
+  // refined / 簡易 / preview は排他（簡易化描画はリファイン済みには成り得ない）
+  parts.push(LIVE.refined ? '<span class="st-ok">refined</span>'
+    : LIVE.simplified ? '<span class="st-simp" title="操作中の簡易化描画（大気/雲/夜光/星空オフ・低バウンス）">簡易</span>'
+    : '<span class="muted">preview</span>');
+  parts.push(`${Math.round(q.scale * 100)}% / ${q.spp} spp` + (q.refine ? ` → ${q.refine_spp} spp` : ''));
+  $('#liveStatus').innerHTML = parts.join('<span class="muted">·</span>');
+
+  const overlay = $('#liveOverlay');
+  if (LIVE.gen < 0 && !LIVE.lastError) {
+    overlay.style.display = '';
+    overlay.textContent = `${currentVerb} のシーンを準備中…`
+      + '（初回は Mitsuba の読み込みで 20 秒ほどかかることがあります）';
+  } else {
+    overlay.style.display = 'none';
+  }
+}
+
+/* --- タイムライン ---
+ * フレーム数はフォームの frames に追従。t はフロントで再現せず（render 系は
+ * 軌道周期ベースの時間軸になり得る）、/api/live/status の time_s を表示する。 */
+function liveFrameCount() { return Math.max(1, Math.round(liveGetNum('frames', 30))); }
+function liveSyncTimeline() {
+  const frames = liveFrameCount();
+  const slider = $('#liveFrame');
+  slider.max = String(frames - 1);
+  if (LIVE.frame > frames - 1) LIVE.frame = frames - 1;
+  if (LIVE.frame < 0) LIVE.frame = 0;
+  slider.value = String(LIVE.frame);
+  const t = LIVE.timeS;
+  $('#liveFrameLabel').textContent = `${LIVE.frame} / ${frames - 1}`
+    + (t != null && isFinite(t) ? ` · t=${t.toFixed(3)} s` : '');
+}
+
+function livePlayToggle() {
+  LIVE.playing = !LIVE.playing;
+  $('#livePlay').textContent = LIVE.playing ? '⏸' : '▶';
+  $('#livePlay').classList.toggle('on', LIVE.playing);
+  if (LIVE.playTimer) { clearInterval(LIVE.playTimer); LIVE.playTimer = null; }
+  if (!LIVE.playing) {
+    // 一時停止＝操作終了。止まったフレームを通常品質で描き直す
+    if (LIVE.on) liveScheduleUpdate(0, false);
+    return;
+  }
+  const fps = Math.max(1, liveGetNum('fps', 30));
+  LIVE.playTimer = setInterval(() => {
+    if (!LIVE.on) return;
+    if (LIVE.inflight) return;   // 前の /update が返るまで進めない（簡易スロットル）
+    LIVE.frame = (LIVE.frame + 1) % liveFrameCount();
+    liveSyncTimeline();
+    liveSendUpdate(true);        // 再生中は操作中扱い（簡易描画）
+  }, 1000 / fps);
+}
+
+/* --- 太陽方向ウィジェット（vec3 ⇄ 方位/仰角） --- */
+function liveSunToAngles(v) {
+  const n = vLen(v);
+  if (n < 1e-9) return { az: 0, el: 0, len: 1 };
+  const el = Math.asin(Math.max(-1, Math.min(1, v[1] / n))) * 180 / Math.PI;
+  const az = Math.atan2(v[2], v[0]) * 180 / Math.PI;
+  return { az, el, len: n };
+}
+function liveAnglesToSun(az, el, len) {
+  const a = az * Math.PI / 180, e = el * Math.PI / 180;
+  return [len * Math.cos(e) * Math.cos(a), len * Math.sin(e), len * Math.cos(e) * Math.sin(a)];
+}
+/* verb 別の太陽ウィジェットのモード。フォームが持つフィールドで判定する。
+ *   vector = relative の sun_direction（方位/仰角の 2 スライダー）
+ *   angle  = render 系の sun_angle [deg]（単一スライダー、空欄=自動）
+ *   none   = rotation（シーンの太陽は固定なのでウィジェット非表示） */
+function liveSunMode() {
+  const g = liveGetters();
+  if (g.sun_direction) return 'vector';
+  if (g.sun_angle) return 'angle';
+  return 'none';
+}
+
+function liveSyncSun() {
+  const mode = liveSunMode();
+  $('#liveSunBox').style.display = mode === 'none' ? 'none' : '';
+  $('#liveSunVec').style.display = mode === 'vector' ? '' : 'none';
+  $('#liveSunAngle_wrap').style.display = mode === 'angle' ? '' : 'none';
+  if (mode === 'vector') liveSyncSunVector();
+  else if (mode === 'angle') liveSyncSunAngle();
+}
+
+function liveSyncSunVector() {
+  const v = liveGetVec('sun_direction', [1, -1, -0.5]);
+  const { az, el } = liveSunToAngles(v);
+  const azEl = $('#liveSunAz'), elEl = $('#liveSunEl');
+  if (Math.abs(Number(azEl.value) - az) > 0.05) azEl.value = String(Math.round(az));
+  if (Math.abs(Number(elEl.value) - el) > 0.05) elEl.value = String(Math.round(el));
+  $('#liveSunAzLabel').textContent = `${Math.round(Number(azEl.value))}°`;
+  $('#liveSunElLabel').textContent = `${Math.round(Number(elEl.value))}°`;
+}
+
+function liveSunSliderChanged() {
+  const az = Number($('#liveSunAz').value), el = Number($('#liveSunEl').value);
+  const cur = liveGetVec('sun_direction', [1, -1, -0.5]);
+  const len = Math.max(1e-6, vLen(cur));
+  liveSetVec('sun_direction', liveAnglesToSun(az, el, len));
+  $('#liveSunAzLabel').textContent = `${Math.round(az)}°`;
+  $('#liveSunElLabel').textContent = `${Math.round(el)}°`;
+  liveScheduleUpdate(LIVE_DRAG_MS, true);
+}
+
+/* render 系: sun_angle [deg]（optional）。空欄なら「自動」（天文学的自動計算）、
+   sun_rotate が ON ならフレームごとに回るのでスライダーは無効化する。 */
+function liveSunRotating() {
+  const g = liveGetters().sun_rotate;
+  return g ? !!g() : false;
+}
+function liveSyncSunAngle() {
+  const g = liveGetters().sun_angle;
+  const raw = g ? g() : null;
+  const auto = !(raw != null && isFinite(Number(raw)));
+  const slider = $('#liveSunAngle');
+  const rotating = liveSunRotating();
+  slider.disabled = rotating;
+  slider.title = rotating
+    ? '「太陽を回す」が ON のため無効です（フレームごとに自動回転します）' : '';
+  if (!auto) slider.value = String(Math.round(Number(raw)));
+  $('#liveSunAngleLabel').textContent = rotating ? '自動回転'
+    : (auto ? '自動' : `${Math.round(Number(slider.value))}°`);
+  const autoBtn = $('#liveSunAngleAuto');
+  autoBtn.style.display = (!auto && !rotating) ? '' : 'none';
+}
+function liveSunAngleChanged() {
+  const g = liveGetters().sun_angle;
+  if (!g || !g.set || liveSunRotating()) { liveSyncSunAngle(); return; }
+  g.set(Math.round(Number($('#liveSunAngle').value)));
+  liveSyncSunAngle();
+  liveScheduleUpdate(LIVE_DRAG_MS, true);
+}
+function liveSunAngleAuto() {
+  const g = liveGetters().sun_angle;
+  if (g && g.set) g.set(null);
+  liveSyncSunAngle();
+  liveScheduleUpdate(0, false);
+}
+
+/* --- カメラ解決とオーバーライド管理 ---
+ * relative / rotation: camera_* はフォームの必須フィールド＝常に真実源。
+ * render 系: camera_* は空欄あり得る「上書き」。空欄のうちは /api/live/status の
+ * camera（ワーカーが解決した実カメラ）が真実源で、ギズモ操作の瞬間にそれを
+ * フォームへ書き込んで上書きへ昇格させる。 */
+function liveWorkerCamVec(key) {
+  const cam = LIVE.camera;
+  const v = cam && cam[key];
+  if (Array.isArray(v) && v.length >= 3 && v.slice(0, 3).every(x => isFinite(Number(x)))) {
+    return v.slice(0, 3).map(Number);
+  }
+  return null;
+}
+function liveCamOrigin() {
+  return liveGetVecRaw('camera_origin') || liveWorkerCamVec('origin') || [3.5, 2.5, 2.0];
+}
+function liveCamTarget() {
+  return liveGetVecRaw('camera_target') || liveWorkerCamVec('target') || [0.5, 0.0, 0.0];
+}
+function liveCamUp() {
+  return vNorm(liveGetVecRaw('camera_up') || liveWorkerCamVec('up') || [0, 1, 0], [0, 1, 0]);
+}
+function liveCamFov() {
+  const v = liveGetNum('camera_fov', null);
+  if (v != null && isFinite(v)) return v;
+  const cam = LIVE.camera;
+  const f = cam != null ? Number(cam.fov) : NaN;
+  return isFinite(f) && f > 0 ? f : 45;
+}
+
+/* 上書き欄が空ならワーカーの実カメラを書き込む。
+   カメラ情報がまだ無ければ false（＝操作を見送る）。 */
+function liveEnsureCamOverride() {
+  if (!liveIsCamOverrideVerb()) return true;
+  const needOrigin = liveGetVecRaw('camera_origin') === null;
+  const needTarget = liveGetVecRaw('camera_target') === null;
+  const needUp = !!liveGetters().camera_up && liveGetVecRaw('camera_up') === null;
+  if (!needOrigin && !needTarget && !needUp) return true;
+  const origin = liveWorkerCamVec('origin');
+  const target = liveWorkerCamVec('target');
+  const up = liveWorkerCamVec('up');
+  if ((needOrigin && !origin) || (needTarget && !target)) {
+    liveSetCamHint('カメラ情報の取得待ちです（最初のライブ描画が出てから操作してください）');
+    return false;
+  }
+  if (needOrigin) liveSetVec('camera_origin', origin);
+  if (needTarget) liveSetVec('camera_target', target);
+  if (needUp && up) liveSetVec('camera_up', up);
+  liveSetCamHint('');
+  liveUpdateCamHint();
+  return true;
+}
+
+function liveHasCamOverride() {
+  return liveGetVecRaw('camera_origin') !== null || liveGetVecRaw('camera_target') !== null
+      || liveGetVecRaw('camera_up') !== null;
+}
+
+/* 上書きを消して view_mode 既定のカメラへ戻す（camera_fov は触らない） */
+function liveClearCamOverride() {
+  for (const key of ['camera_origin', 'camera_target', 'camera_up']) {
+    const g = liveGetters()[key];
+    if (g && g.set) g.set(null);
+  }
+  liveSetCamHint('');
+  liveUpdateCamHint();
+  liveScheduleUpdate(0, false);
+}
+
+/* 一時的な警告（カメラ未取得など）。空にすると通常の案内表示に戻る */
+function liveSetCamHint(msg) { LIVE.camWarn = msg || ''; liveRenderCamHint(); }
+
+function liveRenderCamHint() {
+  const el = $('#liveCamHint');
+  if (!el) return;
+  if (LIVE.camWarn) {
+    el.textContent = LIVE.camWarn;
+    el.style.color = 'var(--warn)';
+  } else if (liveIsCamOverrideVerb() && liveVerbUsable() && !liveHasCamOverride()) {
+    el.textContent = 'カメラ = view_mode 既定（ドラッグすると上書きを開始します）';
+    el.style.color = 'var(--dim)';
+  } else {
+    el.textContent = '';
+  }
+}
+
+function liveUpdateCamHint() {
+  const btn = $('#liveCamReset');
+  if (!btn) return;
+  const show = liveIsCamOverrideVerb() && liveVerbUsable();
+  const has = show && liveHasCamOverride();
+  btn.style.display = show ? '' : 'none';
+  btn.disabled = show && !has;
+  btn.classList.toggle('on', has);
+  if (!liveIsCamOverrideVerb()) LIVE.camWarn = '';
+  liveRenderCamHint();
+}
+
+/* --- ビューポート操作（Blender/Unity 風） --- */
+function liveOrbit(dxPx, dyPx) {
+  if (!liveEnsureCamOverride()) return;
+  const origin = liveCamOrigin();
+  const target = liveCamTarget();
+  const up = liveCamUp();
+  const v = vSub(origin, target);
+  const r = vLen(v);
+  if (r < LIVE_MIN_DIST) return;
+  // up を極軸とする正規直交基底 (f, g, up)
+  const ref = Math.abs(vDot(up, [1, 0, 0])) < 0.9 ? [1, 0, 0] : [0, 0, 1];
+  const f = vNorm(vSub(ref, vMul(up, vDot(ref, up))), [1, 0, 0]);
+  const g = vCross(up, f);
+  let az = Math.atan2(vDot(v, g), vDot(v, f));
+  let el = Math.asin(Math.max(-1, Math.min(1, vDot(v, up) / r)));
+  az -= dxPx * LIVE_ORBIT_DEG_PER_PX * Math.PI / 180;
+  el += dyPx * LIVE_ORBIT_DEG_PER_PX * Math.PI / 180;
+  const lim = 89.5 * Math.PI / 180;
+  el = Math.max(-lim, Math.min(lim, el));
+  const nv = vAdd(
+    vMul(vAdd(vMul(f, Math.cos(az)), vMul(g, Math.sin(az))), r * Math.cos(el)),
+    vMul(up, r * Math.sin(el)));
+  liveSetVec('camera_origin', vAdd(target, nv));
+}
+
+function liveDolly(steps) {
+  if (!liveEnsureCamOverride()) return;
+  const origin = liveCamOrigin();
+  const target = liveCamTarget();
+  const v = vSub(origin, target);
+  const r = vLen(v);
+  if (r < 1e-12) return;
+  const nr = Math.max(LIVE_MIN_DIST, r * Math.pow(LIVE_DOLLY_STEP, steps));
+  liveSetVec('camera_origin', vAdd(target, vMul(v, nr / r)));
+}
+
+function livePan(dxPx, dyPx) {
+  if (!liveEnsureCamOverride()) return;
+  const origin = liveCamOrigin();
+  const target = liveCamTarget();
+  const up = liveCamUp();
+  const fwd = vNorm(vSub(target, origin), [0, 0, -1]);
+  const right = vNorm(vCross(fwd, up), [1, 0, 0]);
+  const camUp = vCross(right, fwd);
+  const dist = vLen(vSub(origin, target));
+  const fov = liveCamFov();
+  const widthPx = Math.max(1, $('#liveImg').clientWidth || 640);
+  const perPx = 2 * dist * Math.tan(Math.max(1, fov) * Math.PI / 360) / widthPx;
+  const delta = vAdd(vMul(right, -dxPx * perPx), vMul(camUp, dyPx * perPx));
+  liveSetVec('camera_origin', vAdd(origin, delta));
+  liveSetVec('camera_target', vAdd(target, delta));
+}
+
+function liveBindViewport() {
+  const img = $('#liveImg');
+
+  img.addEventListener('mousedown', (ev) => {
+    if (!LIVE.on) return;
+    if (ev.button !== 0 && ev.button !== 1) return;
+    ev.preventDefault();
+    LIVE.drag = {
+      x: ev.clientX, y: ev.clientY,
+      mode: (ev.shiftKey || ev.button === 1) ? 'pan' : 'orbit',
+    };
+    img.classList.add('dragging');
+    document.body.classList.add('live-dragging');
+  });
+
+  window.addEventListener('mousemove', (ev) => {
+    if (!LIVE.drag) return;
+    const dx = ev.clientX - LIVE.drag.x;
+    const dy = ev.clientY - LIVE.drag.y;
+    if (dx === 0 && dy === 0) return;
+    LIVE.drag.x = ev.clientX; LIVE.drag.y = ev.clientY;
+    const mode = (ev.shiftKey ? 'pan' : LIVE.drag.mode);
+    if (mode === 'pan') livePan(dx, dy); else liveOrbit(dx, dy);
+    liveScheduleUpdate(LIVE_DRAG_MS, true);   // 操作中は粗く速く
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (!LIVE.drag) return;
+    LIVE.drag = null;
+    img.classList.remove('dragging');
+    document.body.classList.remove('live-dragging');
+    liveScheduleUpdate(0, false);             // 終了時に本来の品質で 1 回
+  });
+
+  img.addEventListener('wheel', (ev) => {
+    if (!LIVE.on) return;
+    ev.preventDefault();
+    liveDolly(ev.deltaY > 0 ? 1 : -1);
+    liveScheduleUpdate(LIVE_DRAG_MS, true);   // 連打中は簡易描画
+    // ホイールが静まったら、ドラッグ終了と同じく通常品質で 1 発送る
+    clearTimeout(LIVE.wheelTimer);
+    LIVE.wheelTimer = setTimeout(() => {
+      LIVE.wheelTimer = null;
+      if (LIVE.on && !LIVE.drag) liveScheduleUpdate(0, false);
+    }, LIVE_WHEEL_STOP_MS);
+  }, { passive: false });
+
+  img.addEventListener('dragstart', (ev) => ev.preventDefault());
+}
+
+/* --- パネル表示制御・フォーム連動 --- */
+function liveSyncAspect() {
+  const w = Math.max(1, Math.round(liveGetNum('width', 640)));
+  const h = Math.max(1, Math.round(liveGetNum('height', 480)));
+  $('#liveImg').style.aspectRatio = `${w} / ${h}`;
+}
+
+function liveSyncFromForm() {
+  if (!liveVerbUsable()) return;
+  liveSyncAspect();
+  liveSyncTimeline();
+  liveSyncSun();
+  liveUpdateCamHint();
+}
+
+/* フォームが作り直された時（verb 切替 / プリセット読込）に呼ばれる */
+function liveOnFormRebuilt() {
+  LIVE.yamlKey = null;   // フォームが入れ替わったので dict キャッシュを捨てる
+  const verbChanged = (LIVE.verb !== currentVerb);
+  if (verbChanged) {
+    // 別 verb の解決済みカメラ・時刻・画像を引きずらない
+    LIVE.verb = currentVerb;
+    LIVE.camera = null;
+    LIVE.timeS = null;
+    LIVE.gen = -1;
+    LIVE.refined = false;
+    LIVE.simplified = false;
+    LIVE.pendingRefine = false;
+    LIVE.stale = true;     // 新 verb で /update が通るまで前 verb の画像を出さない
+    liveSetCamHint('');
+  }
+  updateLivePanel();
+  liveSyncFromForm();
+  // verb を切り替えたら、その verb の fields で改めて /update し直す
+  if (LIVE.on && verbChanged) liveScheduleUpdate(0, false);
+}
+
+function updateLivePanel() {
+  const panel = $('#livePanel');
+  if (!panel) return;
+  const usable = liveVerbUsable();
+  panel.style.display = usable ? '' : 'none';
+  if (!usable) { liveStopPolling(); return; }
+  const schema = STATE.verbs[currentVerb];
+  $('#liveVerbLabel').textContent = `— ${schema ? schema.label : currentVerb}`;
+  $('#liveVerbNote').style.display = LIVE_NOTE_VERBS[currentVerb] ? '' : 'none';
+  $('#liveBody').style.display = LIVE.on ? '' : 'none';
+  $('#liveToggle').textContent = LIVE.on ? 'ライブプレビュー OFF' : 'ライブプレビュー ON';
+  $('#liveToggle').classList.toggle('on', LIVE.on);
+  liveUpdateCamHint();
+  if (LIVE.on) { liveStartPolling(); liveRenderStatus(); } else { liveStopPolling(); }
+}
+
+function liveToggleOnOff() {
+  LIVE.on = !LIVE.on;
+  updateLivePanel();
+  if (LIVE.on) {
+    liveSyncFromForm();
+    liveClearError();
+    liveRenderStatus();
+    liveSendUpdate(false);
+  } else if (LIVE.playing) {
+    livePlayToggle();
+  }
+}
+
+async function liveStopWorker() {
+  try {
+    const res = await fetch('/api/live/stop', { method: 'POST' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    LIVE.gen = -1; LIVE.refined = false; LIVE.pendingRefine = false;
+    LIVE.simplified = false;
+    LIVE.lastStatus = ''; LIVE.lastMs = null; LIVE.started = false;
+    setStatus('ライブプレビューのワーカーを停止しました');
+    liveRenderStatus();
+  } catch (e) {
+    liveSetError(`ワーカー停止に失敗しました: ${e.message}`, false);
+  }
+}
+
+function liveOnFormInput(ev) {
+  if (!liveVerbUsable()) return;
+  liveSyncFromForm();
+  if (!LIVE.on) return;
+  const t = ev && ev.target;
+  if (t && t.tagName === 'TEXTAREA') LIVE.yamlKey = null;  // YAML ブロックは再解決
+  liveScheduleUpdate(LIVE_DEBOUNCE_MS, false);
+}
+
+function liveBind() {
+  liveRestorePrefs();
+  $('#liveToggle').onclick = liveToggleOnOff;
+  $('#liveStopWorker').onclick = liveStopWorker;
+  $('#liveCamReset').onclick = liveClearCamOverride;
+  $('#liveRetry').onclick = () => {
+    LIVE.failures = 0;
+    liveSetError('', false);
+    liveSendUpdate(false);
+    liveStartPolling();
+  };
+  $('#livePlay').onclick = livePlayToggle;
+  $('#liveFrame').addEventListener('input', () => {
+    LIVE.frame = parseInt($('#liveFrame').value, 10) || 0;
+    liveSyncTimeline();
+    liveScheduleUpdate(LIVE_DRAG_MS, true);
+  });
+  $('#liveFrame').addEventListener('change', () => liveScheduleUpdate(0, false));
+  for (const id of ['#liveSunAz', '#liveSunEl']) {
+    $(id).addEventListener('input', liveSunSliderChanged);
+    $(id).addEventListener('change', () => liveScheduleUpdate(0, false));
+  }
+  $('#liveSunAngle').addEventListener('input', liveSunAngleChanged);
+  $('#liveSunAngle').addEventListener('change', () => liveScheduleUpdate(0, false));
+  $('#liveSunAngleAuto').onclick = liveSunAngleAuto;
+  for (const id of ['#liveScale', '#liveSpp', '#liveRefineSpp', '#liveRefine']) {
+    $(id).addEventListener('change', () => { liveRenderStatus(); liveScheduleUpdate(0, false); });
+  }
+  // 「簡易操作」は操作中の送信内容だけを変える設定なので、切り替えても再レンダは
+  // 要求しない（OFF にしたときだけ、簡易画像を通常品質で描き直す）
+  $('#liveSimplify').addEventListener('change', () => {
+    liveStorePrefs();
+    const wasSimplified = LIVE.simplified;
+    liveRenderStatus();
+    if (!liveSimplifyEnabled() && wasSimplified && LIVE.on) liveScheduleUpdate(0, false);
+  });
+  $('#form').addEventListener('input', liveOnFormInput);
+  $('#form').addEventListener('change', liveOnFormInput);
+  // 注: livePoll の中で document.hidden を見てはいけない（埋め込み WebView 等で
+  // 常に hidden=true になる環境がある）。省電力はこのイベント駆動でのみ行う。
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) liveStopPolling();
+    else if (LIVE.on && liveVerbUsable()) liveStartPolling();
+  });
+  liveBindViewport();
+}
+
+/* ---------------- AI アシスタント drawer ----------------
+ * 右端のノンモーダル drawer から gui_server の /api/ai（SSE）へ指示を投げる。
+ * ・1 会話のみ（session_id / model / effort / ログを localStorage に保存）
+ * ・「現在の GUI 設定を渡す」ON なら送信前に /api/compose で YAML を作って同梱
+ * ・done の edited_files に presets/*.yaml があればプリセット一覧を更新し、
+ *   フォームに読み込み中のプリセットなら自動で再読込 → ライブプレビューも追従する
+ * ライブプレビュー（LIVE）の状態には一切触らない。 */
+const AI = {
+  open: false,
+  running: false,
+  runId: null,
+  sess: '',
+  model: '',
+  effort: '',
+  hist: [],          // {k:'user'|'md'|'tool'|'info'|'err', t:string}
+  stat: '',
+  t0: 0,
+  tickTimer: null,
+  disabled: false,   // /api/ai が無い（404）= AI 機能オフ
+};
+const AI_LS = {
+  model: 'mrender.ai.model',
+  effort: 'mrender.ai.effort',
+  sess: 'mrender.ai.session',
+  hist: 'mrender.ai.log',
+};
+const AI_HIST_MAX = 300;
+
+function aiStore() {
+  try {
+    localStorage.setItem(AI_LS.model, AI.model || '');
+    localStorage.setItem(AI_LS.effort, AI.effort || '');
+    localStorage.setItem(AI_LS.sess, AI.sess || '');
+    localStorage.setItem(AI_LS.hist, JSON.stringify(AI.hist.slice(-AI_HIST_MAX)));
+  } catch (e) { /* quota / private mode は無視 */ }
+}
+function aiRestore() {
+  try {
+    AI.model = localStorage.getItem(AI_LS.model) || '';
+    AI.effort = localStorage.getItem(AI_LS.effort) || '';
+    AI.sess = localStorage.getItem(AI_LS.sess) || '';
+    const raw = localStorage.getItem(AI_LS.hist);
+    const arr = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(arr)) AI.hist = arr.filter(x => x && typeof x.t === 'string');
+  } catch (e) { AI.hist = []; }
+}
+
+/* ---- 簡易 Markdown（段落 / 見出し / 箇条書き / `code` / ```block``` / **bold**） ---- */
+function aiEsc(s) {
+  return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+}
+function aiInline(escaped) {
+  return escaped
+    .replace(/`([^`]+)`/g, (m, a) => '<code>' + a + '</code>')
+    .replace(/\*\*([^*]+)\*\*/g, (m, a) => '<strong>' + a + '</strong>');
+}
+function aiMdToHtml(src) {
+  const lines = String(src || '').replace(/\r\n?/g, '\n').split('\n');
+  let html = '';
+  let para = [], list = [], code = null;
+  const flushPara = () => { if (para.length) { html += '<p>' + aiInline(aiEsc(para.join(' '))) + '</p>'; para = []; } };
+  const flushList = () => {
+    if (list.length) {
+      html += '<ul>' + list.map(x => '<li>' + aiInline(aiEsc(x)) + '</li>').join('') + '</ul>';
+      list = [];
+    }
+  };
+  for (const line of lines) {
+    if (/^\s*```/.test(line)) {
+      if (code === null) { flushPara(); flushList(); code = []; }
+      else { html += '<pre><code>' + aiEsc(code.join('\n')) + '</code></pre>'; code = null; }
+      continue;
+    }
+    if (code !== null) { code.push(line); continue; }
+    if (!line.trim()) { flushPara(); flushList(); continue; }
+    const h = line.match(/^\s{0,3}(#{1,6})\s+(.*)$/);
+    if (h) { flushPara(); flushList(); html += '<p><strong>' + aiInline(aiEsc(h[2])) + '</strong></p>'; continue; }
+    const li = line.match(/^\s*(?:[-*+]|\d+\.)\s+(.*)$/);
+    if (li) { flushPara(); list.push(li[1]); continue; }
+    flushList();
+    para.push(line.trim());
+  }
+  if (code !== null) html += '<pre><code>' + aiEsc(code.join('\n')) + '</code></pre>';
+  flushPara(); flushList();
+  return html || '<p></p>';
+}
+
+/* ---- ログ描画 ---- */
+function aiRenderMsg(kind, text) {
+  const log = $('#aiLog');
+  const div = document.createElement('div');
+  div.className = 'ai-msg ' + kind;
+  if (kind === 'md') div.innerHTML = aiMdToHtml(text);
+  else { div.textContent = text; if (kind === 'tool') div.title = text; }
+  log.appendChild(div);
+  return div;
+}
+function aiRenderLog() {
+  const log = $('#aiLog');
+  log.innerHTML = '';
+  for (const m of AI.hist) aiRenderMsg(m.k, m.t);
+  aiSyncRunIndicator();
+  log.scrollTop = log.scrollHeight;
+}
+function aiAppend(kind, text) {
+  AI.hist.push({ k: kind, t: text });
+  if (AI.hist.length > AI_HIST_MAX) AI.hist.splice(0, AI.hist.length - AI_HIST_MAX);
+  aiStore();
+  aiRenderMsg(kind, text);
+  aiSyncRunIndicator();
+  const log = $('#aiLog');
+  log.scrollTop = log.scrollHeight;
+}
+function aiSetStat(s) { AI.stat = s; aiSyncRunIndicator(); }
+function aiSyncRunIndicator() {
+  const log = $('#aiLog');
+  let d = document.getElementById('aiRunInd');
+  if (!AI.running) { if (d) d.remove(); return; }
+  if (!d) {
+    d = document.createElement('div');
+    d.className = 'ai-run'; d.id = 'aiRunInd';
+    const dots = document.createElement('span');
+    dots.className = 'ai-dots';
+    dots.innerHTML = '<i></i><i></i><i></i>';
+    d.appendChild(dots);
+    const t = document.createElement('span'); t.className = 'ai-run-t'; d.appendChild(t);
+    const s = document.createElement('span'); s.className = 'ai-run-s'; d.appendChild(s);
+    const x = document.createElement('button');
+    x.className = 'ai-run-x'; x.textContent = '⏹ 停止'; x.title = '実行を停止';
+    x.onclick = aiStop;
+    d.appendChild(x);
+  }
+  log.appendChild(d);   // 常に末尾へ
+  d.querySelector('.ai-run-t').textContent = AI.stat || '処理中…';
+  d.querySelector('.ai-run-s').textContent = AI.t0 ? Math.max(0, Math.round((Date.now() - AI.t0) / 1000)) + 's' : '';
+  log.scrollTop = log.scrollHeight;
+}
+function aiSetBanner(msg) {
+  const b = $('#aiBanner');
+  b.textContent = msg || '';
+  b.style.display = msg ? '' : 'none';
+}
+function aiUpdateUi() {
+  $('#aiSend').disabled = AI.running || AI.disabled;
+  $('#aiText').disabled = AI.disabled;
+  $('#aiBadge').hidden = !AI.running;
+  $('#aiNote').textContent = AI.sess ? 'session ' + String(AI.sess).slice(0, 8) : '';
+  $('#aiModel').value = AI.model || '';
+  $('#aiEffort').value = AI.effort || '';
+  $('#aiBtn').classList.toggle('on', AI.open);
+  aiSyncRunIndicator();
+}
+function aiToggle(open) {
+  AI.open = (open === undefined) ? !AI.open : !!open;
+  $('#aiPanel').classList.toggle('open', AI.open);
+  $('#aiPanel').setAttribute('aria-hidden', AI.open ? 'false' : 'true');
+  $('#aiBtn').classList.toggle('on', AI.open);
+  if (AI.open) { $('#aiText').focus(); $('#aiLog').scrollTop = $('#aiLog').scrollHeight; }
+}
+
+/* ---- ツール行（参照実装 toolLine の移植） ---- */
+function aiRelPath(p) {
+  const s = String(p || '').replace(/\\/g, '/');
+  for (const dir of ['presets/', 'models/', 'input/', 'runs/', 'gui/', 'verbs/', 'yoshimulib/']) {
+    const i = s.lastIndexOf('/' + dir);
+    if (i >= 0) return s.slice(i + 1);
+  }
+  const j = s.lastIndexOf('/mRendering/');
+  return j >= 0 ? s.slice(j + '/mRendering/'.length) : s;
+}
+function aiToolLine(b) {
+  const i = b.input || {}, n = b.name || 'tool';
+  if (n === 'Read') return 'read ' + aiRelPath(i.file_path);
+  if (n === 'Edit' || n === 'Write' || n === 'NotebookEdit') return 'edit ' + aiRelPath(i.file_path);
+  if (n === 'Bash') return '$ ' + String(i.command || '').split('\n')[0].slice(0, 90);
+  if (n === 'Grep') return 'grep ' + (i.pattern || '');
+  if (n === 'Glob') return 'glob ' + (i.pattern || '');
+  if (n === 'WebSearch') return 'web 検索: ' + (i.query || '');
+  if (n === 'WebFetch') return 'web ' + (i.url || '');
+  if (n === 'TodoWrite') return 'todo 更新';
+  if (n.indexOf('mcp__') === 0) return 'mcp ' + n.replace(/^mcp__/, '').replace(/__/g, ' · ');
+  return n;
+}
+
+/* ---- SSE イベント処理（参照実装 handleAiEvent の移植） ---- */
+function aiHandleEvent(s) {
+  let ev;
+  try { ev = JSON.parse(s); } catch (e) { return; }
+  if (ev.type === 'run_started') {
+    AI.runId = ev.run_id || null;
+    aiSetStat((ev.engine || 'agent') + ' 起動中…');
+    aiUpdateUi();
+  } else if (ev.type === 'system' && ev.subtype === 'init') {
+    AI.sess = ev.session_id || AI.sess;
+    aiStore();
+    aiSetStat('応答を待機中…');
+    aiUpdateUi();
+  } else if (ev.type === 'system' && ev.subtype === 'thinking_tokens') {
+    aiSetStat('思考中…' + (ev.estimated_tokens != null ? ' (' + ev.estimated_tokens + ' tok)' : ''));
+  } else if (ev.type === 'assistant') {
+    for (const blk of (ev.message && ev.message.content) || []) {
+      if (blk.type === 'text' && blk.text && blk.text.trim()) {
+        aiAppend('md', blk.text); aiSetStat('処理中…');
+      } else if (blk.type === 'tool_use') {
+        const line = aiToolLine(blk);
+        aiAppend('tool', line); aiSetStat(line);
+      }
+    }
+  } else if (ev.type === 'result') {
+    const dur = Math.round((ev.duration_ms || 0) / 1000);
+    const cost = ev.total_cost_usd != null ? ' · $' + (+ev.total_cost_usd).toFixed(3) : '';
+    if (ev.is_error) aiAppend('err', '✗ ' + String(ev.result || ev.subtype || 'error').slice(0, 600));
+    else aiAppend('info', '✓ 完了 (' + dur + 's' + cost + ')');
+  } else if (ev.type === 'error') {
+    aiAppend('err', 'exit ' + ev.exit + (ev.stderr ? '\n' + String(ev.stderr).slice(0, 400) : ''));
+  } else if (ev.type === 'done') {
+    aiOnEditedFiles(ev.edited_files || []);
+  }
+}
+
+/* ---- プリセット自動反映 ---- */
+function aiPresetRel(p) {
+  const s = String(p || '').replace(/\\/g, '/').replace(/^\.\//, '');
+  const i = s.lastIndexOf('presets/');
+  return i >= 0 ? s.slice(i) : s;
+}
+async function aiOnEditedFiles(files) {
+  const presets = [];
+  for (const f of files || []) {
+    const rel = aiPresetRel(f);
+    if (/^presets\/[^/]+\.ya?ml$/i.test(rel) && presets.indexOf(rel) < 0) presets.push(rel);
+  }
+  if (!presets.length) return;
+  try { await refreshPresetList(); } catch (e) { /* 一覧更新の失敗は致命でない */ }
+  toast('AI がプリセットを更新: ' + presets.map(p => p.split('/').pop()).join(', '));
+  // 現在フォームに載っているプリセットが編集されたら読み直す
+  //（→ 既存の liveOnFormRebuilt / liveScheduleUpdate がライブプレビューを更新する）
+  if (loadedPresetPath && presets.indexOf(loadedPresetPath) >= 0) {
+    await loadPreset(loadedPresetPath);
+  }
+}
+
+/* ---- 送信 / 停止 ---- */
+async function aiSend() {
+  if (AI.disabled) return;
+  if (AI.running) { toast('実行中です — 完了を待って再送信してください'); return; }
+  const t = $('#aiText').value.trim();
+  if (!t) return;
+
+  // gui_context: 現在フォームの YAML（compose 失敗時は付けずに送る）
+  let guiContext;
+  if ($('#aiCtx').checked) {
+    try {
+      const { fields, yaml_blocks } = collect(currentVerb);
+      const data = await api('/api/compose', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ verb: currentVerb, fields, yaml_blocks }),
+      });
+      guiContext = { verb: currentVerb, yaml: data.yaml };
+    } catch (e) { guiContext = undefined; }
+  }
+
+  aiAppend('user', t + (guiContext ? '\n[gui] ' + currentVerb + ' の現在設定を添付' : ''));
+  $('#aiText').value = '';
+  AI.running = true; AI.runId = null; AI.t0 = Date.now(); AI.stat = '接続中…';
+  aiSetBanner('');
+  aiUpdateUi();
+  clearInterval(AI.tickTimer);
+  AI.tickTimer = setInterval(aiSyncRunIndicator, 1000);
+  try {
+    const res = await fetch('/api/ai', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: t,
+        session_id: AI.sess || undefined,
+        model: AI.model || undefined,
+        effort: AI.effort || undefined,
+        gui_context: guiContext,
+      }),
+    });
+    if (res.status === 404) {
+      AI.disabled = true;
+      aiSetBanner('このサーバでは AI アシスタントが無効です（localhost バインド時のみ利用できます）。');
+      return;
+    }
+    if (res.status === 409) {
+      const j = await res.json().catch(() => ({}));
+      aiAppend('err', j.error === 'session_busy'
+        ? 'このセッションは別タブ / 別クライアントで実行中です'
+        : '別の実行が進行中です — 完了を待って再送信してください');
+      return;
+    }
+    if (!res.ok || !res.body) {
+      const j = await res.json().catch(() => ({}));
+      aiSetBanner('AI エラー ' + res.status + (j.error ? ': ' + j.error : ''));
+      return;
+    }
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const chunk = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        for (const line of chunk.split('\n')) {
+          if (line.startsWith('data: ')) aiHandleEvent(line.slice(6));
+        }
+      }
+    }
+  } catch (e) {
+    aiSetBanner('接続エラー: ' + e.message);
+  } finally {
+    clearInterval(AI.tickTimer); AI.tickTimer = null;
+    AI.running = false; AI.runId = null; AI.t0 = 0; AI.stat = '';
+    aiUpdateUi();
+  }
+}
+function aiStop() {
+  if (!AI.running) return;
+  if (!AI.runId) { toast('開始直後です — 数秒待ってからもう一度'); return; }
+  fetch('/api/ai/stop', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ run_id: AI.runId }),
+  }).catch(() => {});
+  aiSetStat('停止要求を送信…');
+}
+function aiNewConv() {
+  if (AI.running) { toast('実行中です — 停止してから新規会話にしてください'); return; }
+  AI.sess = ''; AI.hist = []; AI.runId = null; AI.stat = '';
+  aiStore();
+  aiSetBanner('');
+  aiRenderLog();
+  aiUpdateUi();
+}
+
+async function aiInit() {
+  aiRestore();
+  aiRenderLog();
+  aiUpdateUi();
+  $('#aiBtn').onclick = () => aiToggle();
+  $('#aiClose').onclick = () => aiToggle(false);
+  $('#aiSend').onclick = aiSend;
+  $('#aiNew').onclick = aiNewConv;
+  $('#aiModel').onchange = e => { AI.model = e.target.value; aiStore(); };
+  $('#aiEffort').onchange = e => { AI.effort = e.target.value; aiStore(); };
+  $('#aiText').addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); aiSend(); }
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape' || !AI.open) return;
+    const dlg = $('#yamlDialog');
+    if (dlg && dlg.open) return;    // YAML ダイアログの Esc は奪わない
+    aiToggle(false);
+  });
+  // 既定値の取得（未実装・非 localhost なら 404 → 落ち着いたバナーで無効化）
+  try {
+    const res = await fetch('/api/ai/defaults');
+    if (res.status === 404) {
+      AI.disabled = true;
+      aiSetBanner('このサーバでは AI アシスタントが無効です（localhost バインド時のみ利用できます）。');
+      aiUpdateUi();
+      return;
+    }
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const d = await res.json();
+    if (d.model) $('#aiModel').options[0].textContent = 'デフォルト (' + d.model + ')';
+    if (d.effort) $('#aiEffort').options[0].textContent = 'デフォルト (' + d.effort + ')';
+    if (d.grok_available === false) {
+      const g = $('#aiModelGrok');
+      if (g) g.remove();
+      if (/^grok/i.test(AI.model)) { AI.model = ''; aiStore(); }
+    }
+    if (d.claude_available === false && d.grok_available === false) {
+      AI.disabled = true;
+      aiSetBanner('AI CLI（claude / grok）が見つかりません。インストール後にサーバを再起動してください。');
+    }
+  } catch (e) {
+    AI.disabled = true;
+    aiSetBanner('AI アシスタントに接続できません（' + e.message + '）。GUI の他の機能はそのまま使えます。');
+  }
+  aiUpdateUi();
+}
+
+/* ---------------- 初期化 ---------------- */
+async function refreshJobs() {
+  // 他タブ・他ウィンドウから開始されたジョブも拾う（既存カードは差分更新）
+  const jobs = await api('/api/jobs');
+  for (const st of jobs) {
+    renderJob(st);
+    if (st.status === 'running' || st.status === 'syncing') pollJob(st.id);
+  }
+}
+
+async function init() {
+  STATE = await api('/api/state');
+  buildTabs();
+  buildPresets();
+  buildForm(currentVerb);
+  loadRuns();
+  await refreshJobs();
+  setInterval(() => refreshJobs().catch(() => {}), 5000);
+  $('#renderBtn').onclick = () => startRender(false);
+  $('#previewBtn').onclick = () => startRender(true);
+  $('#yamlBtn').onclick = showYaml;
+  $('#saveBtn').onclick = savePreset;
+  $('#loadPresetBtn').onclick = () => loadPreset();
+  liveBind();
+  updateLivePanel();
+  initMachines().catch(() => {});   // リモート定義が無ければ黙って非表示
+  aiInit().catch(() => {});   // AI drawer は失敗しても GUI 本体に影響させない
+}
+init().catch(e => setStatus('初期化エラー: ' + e.message, true));
+</script>
+</body>
+</html>

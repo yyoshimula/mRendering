@@ -171,57 +171,6 @@ def ray_sphere_intersection(ray_origin: np.ndarray, ray_direction: np.ndarray,
     return t_near, t_far
 
 
-def compute_optical_depth(start_pos: np.ndarray, end_pos: np.ndarray,
-                         params: AtmosphereParameters, num_samples: int = 10,
-                         scattering_type: str = 'rayleigh') -> float:
-    """
-    2点間の光学的厚さ（optical depth）を計算
-
-    光路 s に沿った減衰係数 β(h(s)) の経路積分:
-        τ = ∫ β(h(s)) ds = β₀ * ∫ exp(-h(s)/H) ds
-    Beer-Lambert 則 I = I₀ * exp(-τ) で減衰量に変換される。
-    ここでは中点則による離散和で近似する（各セグメント中央でサンプル）。
-
-    Args:
-        start_pos: 始点位置 [km]（地球中心からのベクトル）
-        end_pos: 終点位置 [km]
-        params: 大気パラメータ
-        num_samples: サンプリング点数（リーマン和の精度）
-        scattering_type: 'rayleigh' または 'mie'（スケールハイトと係数を切替）
-
-    Returns:
-        optical_depth: 光学的厚さ τ（無次元）
-    """
-    # パラメータ選択
-    if scattering_type == 'rayleigh':
-        scale_height = params.rayleigh_scale_height
-        scattering_coeff = params.rayleigh_coeff
-    else:  # mie
-        scale_height = params.mie_scale_height
-        scattering_coeff = params.mie_coeff
-
-    # サンプリング（中点則: 各セグメントの中央でサンプル）
-    optical_depth = 0.0
-    step_vector = (end_pos - start_pos) / num_samples
-    step_length = np.linalg.norm(step_vector)
-
-    for i in range(num_samples):
-        sample_pos = start_pos + step_vector * (i + 0.5)
-        altitude = np.linalg.norm(sample_pos) - params.earth_radius
-
-        if altitude < 0:
-            altitude = 0
-        elif altitude > params.atmosphere_top:
-            # 大気上限より上は密度ゼロとみなす
-            continue
-
-        # τ_i = β₀ * exp(-h/H) * Δs を加算
-        density = compute_atmospheric_density(altitude, scale_height)
-        optical_depth += density * step_length * scattering_coeff
-
-    return optical_depth
-
-
 def compute_atmospheric_scattering(
     view_pos: np.ndarray,
     view_dir: np.ndarray,

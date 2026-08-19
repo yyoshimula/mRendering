@@ -78,7 +78,7 @@ python mrender.py render --config presets/iss.yaml presets/earth_beauty.yaml
 python mrender.py render --config presets/csv_attitude_orbit.yaml
 
 # 単機のタンブリング（軌道なし、姿勢動力学のみ）
-python mrender.py rotation --config presets/akatsuki_tumble.yaml
+python mrender.py rotation --config presets/akatsuki.yaml
 python mrender.py rotation --frames 30 --wx 0.3 --wy 0.1 --wz 1.5
 
 # 2 機の相対配置（軌道なし、相対位置 + 相対姿勢）

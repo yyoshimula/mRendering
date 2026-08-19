@@ -5,7 +5,7 @@
 1) 引数解決 → `RenderConfig` 構築
 2) 出力先となる `RunDir` を準備
 3) フレームループを回す
-4) 終了時に manifest を書き、必要なら ffmpeg で mp4 化
+4) 必要なら ffmpeg で mp4 化し、最後に manifest を書く（mp4 パスも manifest に残す）
 というオーケストレーションのみを担う。`onboard` verb もここの `run()` を再利用する。
 """
 
@@ -67,6 +67,24 @@ def run(args: argparse.Namespace, run_dir: RunDir | None = None) -> RunDir:
             print('注意: --no-frames が指定されたためフレーム出力をスキップしました。')
         extra['frame_count'] = end_frame - start_frame
         extra['frames_dir'] = str(frames_dir)
+
+        # 完了報告と動画化は manifest 書き込み（finally）より前に済ませる。
+        # ここで動画を作っておかないと 'video' キーが manifest に載らない。
+        print(f"\n{'=' * 60}")
+        print(f'完了: {end_frame - start_frame} フレームを処理しました。')
+        print(f'出力: {frames_dir}/frame_*.png')
+        print(f'ランディレクトリ: {run_dir.path}')
+        if getattr(args, 'make_video', False):
+            # YAML / CLI で動画化指示があれば ffmpeg を呼ぶ。失敗しても致命にはしない。
+            video_path = maybe_make_video(
+                frames_dir,
+                fps=float(getattr(args, 'video_fps', 30.0) or 30.0),
+                output_name=str(getattr(args, 'video_name', 'output.mp4') or 'output.mp4'),
+                enabled=True,
+            )
+            if video_path is not None:
+                extra['video'] = str(video_path)
+        print(f"{'=' * 60}")
     except Exception as exc:
         # 例外でも manifest にステータスを残せるよう、status を上書きしてから再送出。
         status = f'error: {exc!r}'
@@ -78,23 +96,6 @@ def run(args: argparse.Namespace, run_dir: RunDir | None = None) -> RunDir:
             # 親 verb が manifest を書く場合は、render 固有の追加情報だけ預ける。
             run_dir.manifest_extra.setdefault('render', {}).update(extra)
 
-    print(f"\n{'=' * 60}")
-    print(f'完了: {end_frame - start_frame} フレームを処理しました。')
-    print(f'出力: {frames_dir}/frame_*.png')
-    print(f'ランディレクトリ: {run_dir.path}')
-    if getattr(args, 'make_video', False):
-        # YAML / CLI で動画化指示があれば ffmpeg を呼ぶ。失敗しても致命にはしない。
-        video_path = maybe_make_video(
-            frames_dir,
-            fps=float(getattr(args, 'video_fps', 30.0) or 30.0),
-            output_name=str(getattr(args, 'video_name', 'output.mp4') or 'output.mp4'),
-            enabled=True,
-        )
-        if video_path is not None and not owns_run:
-            run_dir.manifest_extra.setdefault('render', {})['video'] = str(video_path)
-        elif video_path is not None:
-            extra['video'] = str(video_path)
-    print(f"{'=' * 60}")
     return run_dir
 
 

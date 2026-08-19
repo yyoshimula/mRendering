@@ -11,7 +11,7 @@
   - 太陽は実効温度 5778 K の黒体に近い（光球の有効温度）。
   - 視等級 m: m₁ - m₂ = -2.5 log₁₀(I₁ / I₂)（Pogson の式）。
     太陽 m_⊙ = -26.74、満月 m_moon ≈ -12.6 等を基準に強度比を導く。
-  - 星空・地球照は環境光（envmap / constant）として近似する。
+  - 星空は環境光（envmap）として近似する。
   - 太陽・月の位置は J2000.0 ユリウス日基準の簡易ケプラー近似。
 
 使用側: scene_builder.py / satellite_orbit.py からシーン辞書に渡される。
@@ -274,38 +274,6 @@ def create_starfield_envmap(
         }
 
 
-def create_earth_shine(
-    intensity: float = 0.3,
-    color: Tuple[float, float, float] = (0.8, 0.9, 1.0)
-) -> Dict[str, Any]:
-    """
-    地球照（アルベド光）を環境光として近似
-
-    実際の地球照は地球の方向（半球）から強く受ける指向性のある照明だが、
-    ここでは簡易に全方向均一の `constant` 光源として近似する。
-    青みは地球（海洋・大気散乱）の典型的な反射色を反映。
-
-    注意: 実際の地球照は方向性があるため、この関数は簡易版です。
-    より正確なシミュレーションにはoptical_atmosphere.pyのcompute_earth_albedoを使用してください。
-
-    Args:
-        intensity: 地球照の強度
-        color: 地球照の色（やや青みがかる）
-
-    Returns:
-        Mitsuba環境光源辞書
-    """
-    earth_color = np.array(color) * intensity
-
-    return {
-        'type': 'constant',
-        'radiance': {
-            'type': 'rgb',
-            'value': earth_color.tolist()
-        }
-    }
-
-
 def compute_sun_position_detailed(
     julian_date: float,
     simplified: bool = True
@@ -435,32 +403,6 @@ def create_space_lighting_scene(
     lighting['starfield'] = create_starfield_envmap(brightness=starfield_brightness, hdri_path=hdri_path)
 
     return lighting
-
-
-class LightingPresets:
-    """照明プリセット
-
-    シーン用途別に SunParameters の典型値をまとめたファクトリ。
-    """
-
-    @staticmethod
-    def daylight() -> SunParameters:
-        """昼間の太陽光（標準: 5778 K）"""
-        return SunParameters(temperature=5778.0, intensity_scale=5.0)
-
-    @staticmethod
-    def sunset() -> SunParameters:
-        """夕方の太陽光
-
-        大気中の長い経路でレイリー散乱が短波長を奪い、見かけの色温度が下がる。
-        3500 K は夕焼け〜白熱電球程度の暖色。
-        """
-        return SunParameters(temperature=3500.0, intensity_scale=3.0)
-
-    @staticmethod
-    def eclipse() -> SunParameters:
-        """日食時の太陽光（皆既日食前後の薄明、強度を大幅に減衰）"""
-        return SunParameters(temperature=5778.0, intensity_scale=0.5)
 
 
 if __name__ == "__main__":

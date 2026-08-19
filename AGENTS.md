@@ -18,24 +18,24 @@ pip install -r yoshimulib/requirements.txt
 ```
 
 ### 実行（satellite_orbit.py: 軌道レンダリング）
+
+**重要**: `render` / `lightcurve` / `preview` / `onboard` 系のパラメータ（軌道要素、フレーム数、サンプル数、外部モデル指定など）は **YAML プリセット経由** で指定する。`config_loader.build_parser()` は `--config` 以外の個別 CLI フラグを登録しない設計なので、`--altitude` や `--frames` を直接渡すことはできない。上書きしたい場合は差分を別 YAML に書いて重ねる。
+
 ```bash
 # YAMLプリセットで実行
-python satellite_orbit.py --config presets/iss_basic.yaml
+python satellite_orbit.py --config presets/iss.yaml
 
-# プリセット + CLIオーバーライド（CLI引数 > YAML > デフォルト）
-python satellite_orbit.py --config presets/iss_basic.yaml --frames 10 --samples 4
+# 差分 YAML を重ねて上書き（後のファイルが優先）
+python satellite_orbit.py --config presets/iss.yaml presets/earth_beauty.yaml
 
-# 基本的なISS軌道（CLI直接指定）
-python satellite_orbit.py --altitude 408 --inclination 51.6 --frames 30
+# 低品質プレビューも同様: frames/samples だけ書いた差分 YAML を自分で用意して重ねる
+#   （例: rendering: {frames: 10, samples: 4} だけの my_quick.yaml）
 
-# 外部3Dモデル使用（OBJ/PLY/GLB）
-python satellite_orbit.py --altitude 408 \
-    --satellite-model models/iss.obj --satellite-scale 0.003 --frames 30
+# CSV ephemeris から軌道・姿勢を再生
+python satellite_orbit.py --config presets/csv_attitude_orbit.yaml
 
-# デブリに外部モデル＋材質オーバーライド
-python satellite_orbit.py --altitude 408 --football --football-distance 1.0 \
-    --debris-model models/target.ply --debris-scale 0.001 \
-    --debris-model-material gold --view-mode debris --auto-fov --frames 60
+# 外部3Dモデル・複数物体は YAML の primary: / objects: セクションで指定
+python satellite_orbit.py --config presets/multi_object.yaml
 ```
 
 ### 実行（simple_rotation.py: 単機タンブリング、軌道なし）
@@ -57,7 +57,7 @@ python mrender.py relative --config presets/relative_static.yaml
 
 # スタンドアロン: static / csv / tumble モード
 python relative_motion.py --frames 30 --rel-position 1.5 0 0
-python relative_motion.py --mode csv --rel-csv input/rel_state_sample.csv --frames 60
+python relative_motion.py --mode csv --rel-csv input/rel_state_hcw.csv --frames 60
 python relative_motion.py --mode tumble --rel-position 1.5 0 0 --wx 0.3 --wz 1.0
 ```
 
@@ -137,9 +137,9 @@ CLIオプション → OrbitalElements → メインループ:
 ```
 
 ### レンダリング設定
-- バリアント：`scalar_rgb`（CPUベースパストレーシング）
+- バリアント：`llvm_ad_rgb`（LLVM JIT による CPU パストレーシング）。GPU を使う場合は各モジュール冒頭の `mi.set_variant()` を `cuda_ad_rgb` に変更する
 - デフォルト：128サンプル/ピクセル、12バウンス深度
-- 出力：`output/`ディレクトリにPNGフレーム
+- 出力：`mrender.py` 経由なら `runs/<ts>_<verb>_<name>/frames/` に PNG 連番（`output/` はスタンドアロン実行時の既定で、`simple_rotation.py` は `output/simple/`、`relative_motion.py` は `output/relative/`）
 
 ## 主要な定数（yoshimulibから取得）
 - 地球赤道半径：6378.137 km（WGS84）

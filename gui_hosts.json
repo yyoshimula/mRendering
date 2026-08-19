@@ -1,0 +1,7 @@
+{
+  "dgx": {
+    "ssh": "dgx",
+    "dir": "mRendering",
+    "variant": "cuda_ad_rgb,llvm_ad_rgb"
+  }
+}

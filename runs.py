@@ -17,7 +17,6 @@ import argparse
 import json
 import os
 import re
-import shutil
 import socket
 import subprocess
 import sys
@@ -103,12 +102,6 @@ class RunDir:
     def frames_dir(self) -> Path:
         """`<run>/frames/` を返す（無ければ作成）。PNG 連番の置き場。"""
         d = self.path / 'frames'
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-
-    def child(self, *parts: str) -> Path:
-        """ランディレクトリ配下にサブディレクトリを作って返すヘルパ。"""
-        d = self.path.joinpath(*parts)
         d.mkdir(parents=True, exist_ok=True)
         return d
 
@@ -222,15 +215,3 @@ def create_run_dir(
     # 解決済み設定はランの開始時点で必ず保存しておく（途中失敗しても残す）。
     run.write_resolved_config(args)
     return run
-
-
-def copy_into_run(run: RunDir, src: Path, dest_name: Optional[str] = None) -> Optional[Path]:
-    """補助成果物（プロット PNG・追加 CSV 等）を run ディレクトリへコピーする。
-
-    ソースが存在しない場合は何もせず `None` を返す（呼び出し側で握りつぶす想定）。
-    """
-    if not src.exists():
-        return None
-    dest = run.path / (dest_name or src.name)
-    shutil.copy2(src, dest)
-    return dest

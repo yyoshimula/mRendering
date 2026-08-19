@@ -24,7 +24,7 @@ import sys
 from typing import List, Optional
 
 # ディスパッチ可能な verb（サブコマンド）一覧。ここに無い名前は弾かれる。
-VERBS = ('render', 'lightcurve', 'preview', 'rotation', 'relative', 'onboard')
+VERBS = ('render', 'lightcurve', 'preview', 'rotation', 'relative', 'onboard', 'gui')
 
 
 def _print_usage(stream=sys.stderr) -> None:
@@ -32,10 +32,11 @@ def _print_usage(stream=sys.stderr) -> None:
     print(
         "usage: mrender <verb> [verb args]\n"
         "  verbs: " + ', '.join(VERBS) + "\n"
-        "  例: python mrender.py render --config presets/iss_basic.yaml\n"
-        "      python mrender.py lightcurve --config presets/iss_basic.yaml\n"
-        "      python mrender.py preview --config presets/iss_basic.yaml --start-frame 10\n"
-        "      python mrender.py rotation --config presets/akatsuki_tumble.yaml\n"
+        "  例: python mrender.py render --config presets/iss.yaml\n"
+        "      python mrender.py lightcurve --config presets/iss.yaml\n"
+        "      python mrender.py preview --config presets/iss.yaml presets/earth_beauty.yaml"
+        "  # 後勝ちで差分 YAML を重ねる\n"
+        "      python mrender.py rotation --config presets/akatsuki.yaml\n"
         "      python mrender.py relative --config presets/relative_static.yaml",
         file=stream,
     )
@@ -63,6 +64,8 @@ def _dispatch(verb: str, rest: List[str]) -> None:
         from verbs.relative import main as run
     elif verb == 'onboard':
         from verbs.onboard import main as run
+    elif verb == 'gui':
+        from verbs.gui import main as run
     else:
         _print_usage()
         raise SystemExit(2)
