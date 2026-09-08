@@ -19,7 +19,7 @@
 | 11 大気透過率 | 光学的厚さに対する散乱係数の二重掛けを除去。太陽側も波長別係数を1回だけ適用。 |
 | 12 地球アルベド | 可視地球面の外向き法線として地球→衛星方向を使い、昼夜判定を修正。 |
 
-`yoshimulib`は`yoshimulib`へのシンボリックリンク。ユーザーの追加指示により、共有ライブラリの[orbit/orbital_elements.py](yoshimulib/orbit/orbital_elements.py)を直接修正し、[ライブラリ回帰テスト](yoshimulib/tests/test_orbital_elements.py)を追加した。mRenderingの暫定補正は削除済み。同じライブラリを利用する他プロジェクトにも修正が反映される。他環境へ変更を移す場合は両リポジトリの変更を揃える必要がある。
+`yoshimulib`は`yoshimulib（元リポジトリ）`へのシンボリックリンク。ユーザーの追加指示により、共有ライブラリの[orbit/orbital_elements.py](yoshimulib（元リポジトリ）/orbit/orbital_elements.py)を直接修正し、[ライブラリ回帰テスト](yoshimulib（元リポジトリ）/tests/test_orbital_elements.py)を追加した。mRenderingの暫定補正は削除済み。同じライブラリを利用する他プロジェクトにも修正が反映される。他環境へ変更を移す場合は両リポジトリの変更を揃える必要がある。
 
 ## 修正前後の数値
 

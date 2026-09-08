@@ -1,6 +1,6 @@
 # Imported spacecraft models
 
-Source: `3Dmodels` (separate source repository).
+Source: the separate `3Dmodels` repository (GitHub `ssdlab-ku/3Dmodels`, private; Blender sources).
 
 Imported: ACS3, BlueWalker-3, EKRAN, H-IIA upper stage (ADRAS-J target).
 

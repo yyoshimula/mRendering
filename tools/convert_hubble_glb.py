@@ -11,7 +11,8 @@ import os
 import sys
 from mathutils import Vector
 
-ROOT = '<repo root>'
+# リポジトリルート（このファイルは tools/ 直下）。Blender の --python 実行でも __file__ は使える
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, 'models', 'hubble_a.glb')
 OBJ_OUT = os.path.join(ROOT, 'models', 'hubble.obj')
 TEX_DIR = os.path.join(ROOT, 'models', 'hubble_textures')
