@@ -78,6 +78,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mitsuba as mi
 
 from yoshimulib.attitude.quaternion import q2dcm
+from relative_camera import chief_origin, resolve_camera
+from asset_bootstrap import ensure_starfield_envmap
 
 from mi_variant import init_variant
 init_variant(mi)  # MRENDER_VARIANT 環境変数でバリアント切替（mi_variant.py 参照）
@@ -175,6 +177,16 @@ def compose_deputy_state(chief_pos: np.ndarray, chief_q: np.ndarray,
         ).ravel()
         deputy_q_inertial = deputy_q_inertial / np.linalg.norm(deputy_q_inertial)
     return deputy_pos_inertial, deputy_q_inertial
+
+
+def scene_deputy_state(args, chief_q, rel_pos, rel_q):
+    """Positions are Hill components by default; relative attitude retains its convention."""
+    if args.mode == 'absolute':
+        return rel_pos, rel_q
+    pos, quat = compose_deputy_state(np.zeros(3), chief_q, rel_pos, rel_q)
+    if getattr(args, 'relative_frame', 'hill') == 'hill':
+        pos = np.asarray(rel_pos, dtype=float)
+    return pos, quat
 
 
 # ---------------------------------------------------------------------------
@@ -286,13 +298,24 @@ def add_object(objects: dict, body_transform: mi.ScalarTransform4f,
                default_bsdf: Optional[dict], scale: float, prefix: str) -> None:
     """1 物体を objects 辞書へ追加する。OBJ 指定時はパーツ別 BSDF も適用。"""
     if model_path:
+        extension = Path(model_path).suffix.lower()
+        if extension in ('.glb', '.gltf'):
+            from asset_cache import glb_to_obj_cached
+            model_path = str(glb_to_obj_cached(Path(model_path)))
+        elif extension == '.ply':
+            objects[f'{prefix}_mesh'] = {
+                'type': 'ply', 'filename': model_path,
+                'to_world': body_transform @ mi.ScalarTransform4f.scale(scale),
+                'bsdf': default_bsdf or {'type': 'diffuse', 'reflectance': .55},
+            }
+            return
         objects.update(load_model_with_parts(
             model_path, part_bsdfs or {}, default_bsdf or {},
             body_transform, scale, prefix=prefix,
         ))
     else:
         # プロシージャル衛星はキー名にプレフィックスを付けて両機の衝突を防ぐ
-        for key, val in create_satellite(body_transform).items():
+        for key, val in create_satellite(body_transform @ mi.ScalarTransform4f.scale(scale)).items():
             objects[f'{prefix}_{key}'] = val
 
 
@@ -830,8 +853,14 @@ def build_scene(chief_xform: mi.ScalarTransform4f,
                 sun_rgb=(5.0, 5.0, 4.8),
                 env_dict: Optional[dict] = None,
                 earth_dict: Optional[dict] = None,
-                hide_chief: bool = False) -> dict:
+                hide_chief: bool = False, camera_mode: str = 'manual',
+                camera_offset=(0., 0., 0.), camera_direction=(1., 0., 0.),
+                camera_body_up=(0., 0., 1.)) -> dict:
     """Mitsuba シーン辞書を組み立てる。"""
+    camera = resolve_camera(camera_mode, np.array(chief_xform.matrix), np.array(deputy_xform.matrix),
+                            origin=camera_origin, target=camera_target, up=camera_up,
+                            offset=camera_offset, direction=camera_direction, body_up=camera_body_up)
+    camera_origin, camera_target, camera_up = camera['origin'], camera['target'], camera['up']
     if env_dict is None:
         env_dict = {
             'type': 'constant',
@@ -891,13 +920,14 @@ def build_scene(chief_xform: mi.ScalarTransform4f,
             glow=0.8,
         ))
 
-    if not hide_chief:
+    if (not hide_chief or camera_mode.startswith('deputy_')) and not camera_mode.startswith('chief_'):
         add_object(scene_dict, chief_xform,
                    model_path=chief_model, part_bsdfs=chief_parts,
                    default_bsdf=chief_default_bsdf, scale=chief_scale, prefix='chief')
-    add_object(scene_dict, deputy_xform,
-               model_path=deputy_model, part_bsdfs=deputy_parts,
-               default_bsdf=deputy_default_bsdf, scale=deputy_scale, prefix='deputy')
+    if not camera_mode.startswith('deputy_'):
+        add_object(scene_dict, deputy_xform,
+                   model_path=deputy_model, part_bsdfs=deputy_parts,
+                   default_bsdf=deputy_default_bsdf, scale=deputy_scale, prefix='deputy')
 
     return scene_dict
 
@@ -962,6 +992,8 @@ def build_environment(args: argparse.Namespace, chief_pos: np.ndarray
     env_brightness = args.env_brightness
     starfield = args.starfield
     if starfield:
+        # 既定の assets/starfield.exr は Git 管理外なので、無ければここで生成する。
+        ensure_starfield_envmap(starfield)
         env_dict = {'type': 'envmap', 'filename': str(starfield),
                     'scale': float(env_brightness if env_brightness is not None else 1.0)}
     elif env_brightness is not None:
@@ -1100,12 +1132,13 @@ class AbsoluteOrbitContext:
             a_dep_rtn = self.rtn_dcm(r_d, v_d)
             return q2dcm(np.asarray(rel_q_init, dtype=float), scalar=SCALAR) @ a_dep_rtn
         # csv
-        q = self._deputy_eph.attitude_at(float(t))
-        if q is None:
+        body_to_eci = self._deputy_eph.attitude_at(float(t))
+        if body_to_eci is None:
             raise ValueError(
                 f'--deputy-orbit-csv に姿勢列 q1..q4 がありません: '
                 f'{getattr(self._deputy_eph, "csv_path", "")}')
-        return q2dcm(np.asarray(q, dtype=float), scalar=SCALAR)
+        # CsvEphemeris はクォータニオンではなく Body→ECI の DCM を返す。
+        return np.asarray(body_to_eci, dtype=float).T
 
     def rel_quat_scene(self, a_eci2body: np.ndarray, a_i2rtn: np.ndarray
                        ) -> np.ndarray:
@@ -1517,7 +1550,7 @@ def _run(args: argparse.Namespace) -> None:
     deputy_default_bsdf = getattr(args, 'deputy_bsdf', None)
 
     # chief 姿勢（全フレームで固定）
-    chief_pos = np.asarray(args.chief_position, dtype=float)
+    chief_pos = chief_origin(args.chief_position)
     chief_q = np.asarray(args.chief_quat, dtype=float)
     chief_q = chief_q / np.linalg.norm(chief_q)
     chief_xform = make_body_transform(chief_pos, chief_q)
@@ -1638,15 +1671,7 @@ def _run(args: argparse.Namespace) -> None:
             rel_pos = rel_pos_init
             rel_q = q_dep
 
-        if args.mode == 'absolute':
-            # シーン = chief RTN。rel_pos/rel_q は既に RTN 基準なのでそのまま
-            # 使う（chief_quat は chief モデルの見た目姿勢にのみ影響）
-            deputy_pos_inertial, deputy_q_inertial = rel_pos, rel_q
-        else:
-            # deputy の慣性位置・姿勢を合成（規約・数値検証は compose_deputy_state
-            # の docstring 参照。live_worker と共有し実装を 1 箇所に閉じ込める）。
-            deputy_pos_inertial, deputy_q_inertial = compose_deputy_state(
-                chief_pos, chief_q, rel_pos, rel_q)
+        deputy_pos_inertial, deputy_q_inertial = scene_deputy_state(args, chief_q, rel_pos, rel_q)
 
         deputy_xform = make_body_transform(deputy_pos_inertial, deputy_q_inertial)
         _t1 = _time.perf_counter()
@@ -1668,7 +1693,9 @@ def _run(args: argparse.Namespace) -> None:
             sun_rgb=frame_sun_rgb,
             env_dict=frame_env_dict,
             earth_dict=frame_earth_dict,
-            hide_chief=bool(args.hide_chief),
+            hide_chief=bool(args.hide_chief), camera_mode=args.camera_mode,
+            camera_offset=args.camera_offset, camera_direction=args.camera_direction,
+            camera_body_up=args.camera_body_up,
         )
         _t2 = _time.perf_counter()
         if pscene is not None:

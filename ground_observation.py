@@ -87,11 +87,10 @@ init_variant(mi)
 from yoshimulib.conversion.calendar import gc2jd                      # noqa: E402
 from yoshimulib.orbit.sidereal import gmst                            # noqa: E402
 from yoshimulib.orbit.transforms import shadow as earth_shadow        # noqa: E402
-from yoshimulib.orbit.orbital_elements import oe2rv                   # noqa: E402
 
 from orbit_mechanics import (                                         # noqa: E402
     EARTH_RADIUS_KM, EARTH_MU,
-    OrbitalElements, CsvEphemeris,
+    OrbitalElements, CsvEphemeris, oe2rv,
     compute_orbital_position, compute_attitude_matrix,
 )
 from scene_common import (                                            # noqa: E402
@@ -594,7 +593,7 @@ def kolmogorov_phase_screen(n: int, dx: float, r0: float, l0_outer: float,
     落とすため、Lane/Johansson-Gavel 式の 3 レベル・サブハーモニクスで
     低周波を補う（像揺れの再現に必須）。
     構造関数 D(r) = 6.88(r/r0)^{5/3} との一致は
-    tools/groundobs_validation/turbulence_validation.py で検証。
+    internal/groundobs_validation/turbulence_validation.py で検証。
     """
     df = 1.0 / (n * dx)
     fx = np.fft.fftfreq(n, d=dx)

@@ -61,6 +61,16 @@ _GENERATED_TEXTURE_CACHE: Dict[Tuple[Any, ...], str] = {}
 _SUN_DIR_KEY_DECIMALS = 12
 
 
+def earth_surface_transform(rotation_deg: float = 0.0) -> mi.ScalarTransform4f:
+    """経度0°が+Xに来るよう、球体UVの原点を地理画像の中央へ揃える。
+
+    Mitsuba sphere は local +X が u=0。地理画像は u=.5 が経度0°なので
+    球を180°回したうえで地球自転を適用する。昼・雲・夜光に共通。
+    この180°はUV規約の補正で、ECEF→ECIの自転角には含めない。
+    """
+    return mi.ScalarTransform4f.rotate([0, 0, 1], 180.0 + rotation_deg)
+
+
 def create_earth(radius=1.0, texture_path=None, rotation_deg: float = 0.0):
     """
     地球を表す球体を作成
@@ -94,11 +104,9 @@ def create_earth(radius=1.0, texture_path=None, rotation_deg: float = 0.0):
         'type': 'sphere',
         'center': [0, 0, 0],
         'radius': radius,
-        'bsdf': bsdf
+        'bsdf': bsdf,
+        'to_world': earth_surface_transform(rotation_deg),
     }
-    if abs(rotation_deg) > 1e-8:
-        # 自転を適用 (Mitsuba の to_world は世界座標への変換行列)
-        earth['to_world'] = mi.ScalarTransform4f.rotate([0, 0, 1], rotation_deg)
     return earth
 
 
@@ -315,10 +323,9 @@ def create_clouds(radius: float, texture_path: str, opacity: float = 0.5,
         'type': 'sphere',
         'center': [0, 0, 0],
         'radius': radius,
-        'bsdf': bsdf
+        'bsdf': bsdf,
+        'to_world': earth_surface_transform(rotation_deg),
     }
-    if abs(rotation_deg) > 1e-8:
-        clouds['to_world'] = mi.ScalarTransform4f.rotate([0, 0, 1], rotation_deg)
     return clouds
 
 
@@ -333,6 +340,7 @@ def create_night_lights(radius: float, texture_path: str,
         'type': 'sphere',
         'center': [0, 0, 0],
         'radius': radius,
+        'to_world': earth_surface_transform(rotation_deg),
         'bsdf': {'type': 'null'},
         'emitter': {
             'type': 'area',
@@ -342,8 +350,6 @@ def create_night_lights(radius: float, texture_path: str,
             }
         }
     }
-    if abs(rotation_deg) > 1e-8:
-        night_lights['to_world'] = mi.ScalarTransform4f.rotate([0, 0, 1], rotation_deg)
     return night_lights
 
 

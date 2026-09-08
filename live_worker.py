@@ -93,7 +93,7 @@ SCALAR = RM.SCALAR
 #   （光度曲線 CSV はバッチ実行でのみ計算する）。onboard は GUI 側 defaults の
 #   view_mode=satellite が fields に載ってくるだけで、経路は render と同じ。
 ORBIT_VERBS = ('render', 'preview', 'onboard', 'lightcurve')
-SUPPORTED_VERBS = ('relative', 'rotation', 'groundobs') + ORBIT_VERBS
+SUPPORTED_VERBS = ('relative', 'rotation', 'groundobs', 'modelview') + ORBIT_VERBS
 
 # refine（高品質再レンダ）の解像度上限
 REFINE_MAX_W = 1280
@@ -550,23 +550,20 @@ def build_scene_dict(args: argparse.Namespace, frame: int,
     deputy_parts = getattr(args, 'deputy_parts', None)
     deputy_default_bsdf = getattr(args, 'deputy_bsdf', None)
 
-    chief_pos = np.asarray(args.chief_position, dtype=float)
+    chief_pos = RM.chief_origin(args.chief_position)
     chief_q = np.asarray(args.chief_quat, dtype=float)
     chief_q = chief_q / np.linalg.norm(chief_q)
     chief_xform = RM.make_body_transform(chief_pos, chief_q)
 
     rel_pos, rel_q, time_s, traj_frames = relative_state_at(args, frame)
 
-    if args.mode == 'absolute':
-        # シーン = chief RTN。rel_pos/rel_q は既に RTN 基準（バッチと同じ）
-        deputy_pos_inertial, deputy_q_inertial = rel_pos, rel_q
-    else:
-        # deputy の慣性位置・姿勢はバッチ (_run) と同じ共有ヘルパーで合成する
-        # （規約・数値検証は relative_motion.compose_deputy_state の docstring 参照）
-        deputy_pos_inertial, deputy_q_inertial = RM.compose_deputy_state(
-            chief_pos, chief_q, rel_pos, rel_q)
+    deputy_pos_inertial, deputy_q_inertial = RM.scene_deputy_state(args, chief_q, rel_pos, rel_q)
 
     deputy_xform = RM.make_body_transform(deputy_pos_inertial, deputy_q_inertial)
+    args._resolved_camera = RM.resolve_camera(
+        args.camera_mode, np.array(chief_xform.matrix), np.array(deputy_xform.matrix),
+        origin=args.camera_origin, target=args.camera_target, up=args.camera_up,
+        offset=args.camera_offset, direction=args.camera_direction, body_up=args.camera_body_up)
     # 太陽色・環境光・地球背景もバッチ (_run) と同じ共有ヘルパーで組む
     sun_direction = args.sun_direction
     if args.mode == 'absolute':
@@ -602,7 +599,9 @@ def build_scene_dict(args: argparse.Namespace, frame: int,
         sun_rgb=sun_rgb,
         env_dict=env_dict,
         earth_dict=earth_dict,
-        hide_chief=bool(args.hide_chief),
+        hide_chief=bool(args.hide_chief), camera_mode=args.camera_mode,
+        camera_offset=args.camera_offset, camera_direction=args.camera_direction,
+        camera_body_up=args.camera_body_up,
     )
     return scene_dict, traj_frames, time_s
 
@@ -647,12 +646,7 @@ def build_relative_frame(fields: Dict[str, Any], frame: int,
     t0 = time.perf_counter()
     args = make_args(fields)
     scene_dict, traj_frames, time_s = build_scene_dict(args, frame, width, height, samples)
-    camera = {
-        'origin': _vec(args.camera_origin, [3.5, 2.5, 2.0]),
-        'target': _vec(args.camera_target, [0.5, 0.0, 0.0]),
-        'up': _vec(args.camera_up, [0.0, 1.0, 0.0]),
-        'fov': float(args.camera_fov or 45.0),
-    }
+    camera = {**args._resolved_camera, 'fov': float(args.camera_fov or 45.0)}
     return FrameBuild(scene_dict, traj_frames, camera, time_s, None,
                       {'build': (time.perf_counter() - t0) * 1000.0})
 
@@ -910,11 +904,9 @@ def orbit_earth_textures(tmp_dir: Path, time_s: float, sun_direction: np.ndarray
     ファイル生成を 1 度で済ませる点だけ。同じキーなら同じ画素になる。
     """
     import scene_earth as SE  # noqa: N806 - 2 回目以降は sys.modules から即返る
+    from satellite_orbit import compute_earth_rotation_deg
 
-    earth_rotation_deg = 0.0
-    if config.earth.earth_rotation:
-        seconds_per_day = config.earth.earth_rotation_period_hours * 3600.0
-        earth_rotation_deg = (time_s / seconds_per_day) * 360.0 * config.earth.earth_rotation_speed
+    earth_rotation_deg = compute_earth_rotation_deg(time_s, config)
 
     night_emission_texture: Optional[Path] = None
     cloud_opacity_texture: Optional[Path] = None
@@ -1079,6 +1071,10 @@ def build_orbit_frame(verb: str, fields: Dict[str, Any], frame: int,
 def build_frame(verb: str, fields: Dict[str, Any], frame: int,
                 width: int, height: int, samples: int, tmp_dir: Path) -> FrameBuild:
     """verb に応じたフレームビルダーへディスパッチする。"""
+    if verb == 'modelview':
+        from model_viewer import build_scene
+        scene, camera = build_scene(flatten_fields(fields), width, height, samples)
+        return FrameBuild(scene, 1, camera, 0.0, None, {})
     if verb == 'relative':
         return build_relative_frame(fields, frame, width, height, samples)
     if verb == 'rotation':
@@ -1240,6 +1236,8 @@ def camera_from_fields(verb: str, fields: Dict[str, Any]
     高速パスの対象外なら None を返す（呼び出し側はリビルドへ落ちる）。
     """
     flat = flatten_fields(fields)
+    if verb == 'relative' and flat.get('camera_mode', 'manual') != 'manual':
+        return None  # Mounted cameras depend on this frame's object transforms.
     origin = _vec3(flat.get('camera_origin'))
     target = _vec3(flat.get('camera_target'))
     if origin is None or target is None:
@@ -1684,7 +1682,8 @@ class LiveHandler(BaseHTTPRequestHandler):
         route = parsed.path
 
         if route == '/health':
-            self._send_json({'ok': True, 'pid': os.getpid()})
+            self._send_json({'ok': True, 'pid': os.getpid(),
+                             'instance_token': getattr(self.server, 'instance_token', None)})
         elif route == '/status':
             self._send_json(WORKER.snapshot())
         elif route == '/frame':
@@ -1770,10 +1769,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser = argparse.ArgumentParser(description='mrender ライブプレビュー ワーカー')
     parser.add_argument('--port', type=int, default=8601)
     parser.add_argument('--host', type=str, default='127.0.0.1')
+    parser.add_argument('--instance-token', default=None)
     args = parser.parse_args(argv)
 
     global _SERVER
     _SERVER = _ReuseAddrServer((args.host, args.port), LiveHandler)
+    _SERVER.instance_token = args.instance_token
     WORKER.start()
     print(f'live_worker: http://{args.host}:{args.port}/  (variant={mi.variant()}, cwd={os.getcwd()})',
           flush=True)

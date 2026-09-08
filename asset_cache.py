@@ -28,6 +28,11 @@
 from __future__ import annotations
 
 import os
+import json
+import math
+import struct
+import shutil
+import subprocess
 import threading
 from pathlib import Path
 from typing import Any, Dict, Tuple
@@ -43,12 +48,61 @@ _GLB_CACHE: Dict[Tuple[str, float], str] = {}
 _GLB_LOCK = threading.Lock()
 
 
+def _obj_has_extent(path: Path) -> bool:
+    """Reject empty/collapsed exports before reusing a disk cache."""
+    first = None
+    try:
+        with path.open() as fh:
+            for line in fh:
+                if not line.startswith('v '):
+                    continue
+                point = tuple(float(v) for v in line.split()[1:4])
+                if len(point) != 3 or not all(math.isfinite(v) for v in point):
+                    return False
+                if first is None:
+                    first = point
+                elif point != first:
+                    return True
+    except (OSError, ValueError):
+        return False
+    return False
+
+
+def _uses_draco(path: Path) -> bool:
+    if path.suffix.lower() == '.glb':
+        with path.open('rb') as fh:
+            fh.read(12)
+            size, kind = struct.unpack('<II', fh.read(8))
+            if kind != 0x4E4F534A:
+                raise ValueError(f'GLB JSON chunk is missing: {path}')
+            doc = json.loads(fh.read(size))
+    else:
+        doc = json.loads(path.read_text())
+    return 'KHR_draco_mesh_compression' in doc.get('extensionsUsed', [])
+
+
+def _export_draco_with_blender(path: Path, output: Path) -> None:
+    blender = shutil.which('blender')
+    mac_blender = Path('/Applications/Blender.app/Contents/MacOS/Blender')
+    if not blender and mac_blender.is_file():
+        blender = str(mac_blender)
+    if not blender:
+        raise ValueError('Draco圧縮モデルの変換にはBlenderが必要です。展開済みOBJを指定することもできます。')
+    helper = Path(__file__).parent / 'tools/convert_gltf_blender.py'
+    result = subprocess.run([blender, '--background', '--factory-startup',
+                             '--python-exit-code', '1', '--python', str(helper),
+                             '--', str(path.resolve()), str(output.resolve())],
+                            capture_output=True, text=True, timeout=180)
+    if result.returncode or not _obj_has_extent(output):
+        raise ValueError(f'Dracoモデルの変換に失敗しました: {path}\n{(result.stdout + result.stderr)[-1000:]}')
+
+
 def glb_to_obj_cached(path: Path) -> Path:
     """GLB/glTF を OBJ へ変換して返す（既存の新しい OBJ があれば再利用）。
 
-    変換式は従来の `scene_objects.load_external_model` と同一
-    （Scene なら全 Trimesh を concatenate、`include_normals=False` で export）
-    なので、生成される OBJ の中身は従来と同じになる。
+    通常の glTF はシーングラフの変換を適用して結合する。Draco圧縮は
+    Blenderで展開する。不正なゼロサイズOBJは既存キャッシュとして採用しない。
+    法線は出力せず、Mitsuba側で面から生成する。
 
     Args:
         path: `.glb` / `.gltf` ファイルへのパス。
@@ -68,19 +122,21 @@ def glb_to_obj_cached(path: Path) -> Path:
 
     obj_path = path.with_suffix('.obj')
     # プロセスをまたいだ再利用: 変換済み OBJ が GLB より新しければそのまま使う。
-    if not (obj_path.exists() and os.path.getmtime(obj_path) >= mtime):
-        import trimesh
-        scene_or_mesh = trimesh.load(str(path))
-        if isinstance(scene_or_mesh, trimesh.Scene):
-            meshes = [g for g in scene_or_mesh.geometry.values()
-                      if isinstance(g, trimesh.Trimesh)]
-            if not meshes:
-                raise ValueError(f'GLBファイルにメッシュが含まれていません: {path}')
-            mesh = trimesh.util.concatenate(meshes)
+    if not (obj_path.exists() and os.path.getmtime(obj_path) >= mtime and _obj_has_extent(obj_path)):
+        if _uses_draco(path):
+            _export_draco_with_blender(path, obj_path)
         else:
-            mesh = scene_or_mesh
-        mesh.export(str(obj_path), file_type='obj', include_normals=False)
-        print(f'  [trimesh] {path} → {obj_path}')
+            import trimesh
+            scene_or_mesh = trimesh.load(str(path))
+            if isinstance(scene_or_mesh, trimesh.Scene):
+                meshes = list(scene_or_mesh.dump())
+                if not meshes:
+                    raise ValueError(f'GLBファイルにメッシュが含まれていません: {path}')
+                mesh = trimesh.util.concatenate(meshes)
+            else:
+                mesh = scene_or_mesh
+            mesh.export(str(obj_path), file_type='obj', include_normals=False)
+        print(f'  [model conversion] {path} → {obj_path}')
 
     with _GLB_LOCK:
         _GLB_CACHE[key] = str(obj_path)

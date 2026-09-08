@@ -170,7 +170,8 @@ class NumericalPropagator:
     """数値軌道伝播器。初期軌道要素から solve_ivp で伝播し、任意時刻の状態を補間で返す。
 
     用途: J2 や大気抵抗を含めたい場合に compute_orbital_position の代替として使用する。
-    内部では DOP853 で 1 周期分以上を一度に積分し、`dense_output` で任意 t をサンプル。
+    内部では DOP853 で正負それぞれ1周期分以上を積分し、有効区間内で
+    `dense_output` をサンプルする。負の時刻も初期状態から逆向きに積分する。
     入出力は全て ECI、単位は km / km/s / s。
     """
 
@@ -184,6 +185,8 @@ class NumericalPropagator:
         self.drag_a_over_m = drag_a_over_m
         self._sol = None
         self._t_max = 0.0
+        self._sol_backward = None
+        self._t_min = 0.0
 
     def _initial_state(self) -> np.ndarray:
         """軌道要素から初期状態ベクトル [x,y,z,vx,vy,vz] を生成。"""
@@ -192,12 +195,18 @@ class NumericalPropagator:
 
     def _ensure_propagated(self, t: float) -> None:
         """必要な時刻まで伝播済みか確認し、不足なら再伝播する。"""
-        if self._sol is not None and t <= self._t_max:
+        if not np.isfinite(t):
+            raise ValueError('軌道伝播時刻は有限値である必要があります')
+        if t < 0:
+            if self._sol_backward is not None and t >= self._t_min:
+                return
+        elif self._sol is not None and t <= self._t_max:
             return
 
         # 要求時刻 + 余裕（周期の10%）まで伝播
         margin = self.elements.orbital_period * 0.1
-        t_end = max(t + margin, self.elements.orbital_period)
+        extent = max(abs(t) + margin, self.elements.orbital_period)
+        t_end = -extent if t < 0 else extent
 
         y0 = self._initial_state()
         sol = solve_ivp(
@@ -214,8 +223,12 @@ class NumericalPropagator:
         if not sol.success:
             raise RuntimeError(f"軌道伝播に失敗: {sol.message}")
 
-        self._sol = sol.sol
-        self._t_max = t_end
+        if t < 0:
+            self._sol_backward = sol.sol
+            self._t_min = t_end
+        else:
+            self._sol = sol.sol
+            self._t_max = t_end
 
     def state_at(self, t: float) -> Tuple[np.ndarray, np.ndarray]:
         """時刻 t [s] における位置 [km] と速度 [km/s] を返す (ECI)。
@@ -223,7 +236,7 @@ class NumericalPropagator:
         必要に応じて再伝播する遅延評価。dense_output による高次補間を内部使用。
         """
         self._ensure_propagated(t)
-        state = self._sol(t)
+        state = (self._sol_backward if t < 0 else self._sol)(t)
         return state[:3], state[3:]
 
 
@@ -395,7 +408,7 @@ def compute_attitude_matrix(position: np.ndarray, velocity: np.ndarray,
     衛星の姿勢行列を計算
 
     モード別の指向則:
-      - nadir            : 機体 -z 軸を地球中心 (-R 方向) へ向ける（地球指向）
+      - nadir            : 機体 +z 軸を地球中心 (-R 方向) へ向ける（地球指向）
                            x=W (orbit normal), y=S (along-track), z=-R (nadir)
       - sun_tracking     : 機体 +z 軸を太陽方向へ向ける（ソーラーパネル正対）
                            x は速度方向と直交させて取り、y = z × x で右手系を完成
@@ -565,4 +578,10 @@ def is_earth_occluded(observer_km: np.ndarray, target_km: np.ndarray,
     t = -np.dot(observer_km, d) / d_norm_sq
     t = np.clip(t, 0.0, 1.0)
     closest = observer_km + t * d
-    return np.dot(closest, closest) < earth_radius_km ** 2
+    # 地表端点の接触は遮蔽ではない。三角関数・内積・線分補間の丸めだけを
+    # 許容し、地平線下を実際に通る視線は引き続き遮蔽する。
+    radius_sq = earth_radius_km ** 2
+    scale_sq = max(radius_sq, float(np.dot(observer_km, observer_km)),
+                   float(np.dot(target_km, target_km)))
+    tolerance = 16 * np.finfo(float).eps * scale_sq
+    return bool(np.dot(closest, closest) < radius_sq - tolerance)

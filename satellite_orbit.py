@@ -167,8 +167,10 @@ def compute_object_state(spec: ObjectSpec, time_s: float, sun_direction: np.ndar
         position_km, velocity_km = spec.ephemeris.state_at(time_s)
         attitude_matrix = spec.ephemeris.attitude_at(time_s)
         if attitude_matrix is None:
-            # クォータニオン列が無いときは恒等姿勢にフォールバック。
-            attitude_matrix = np.eye(3)
+            attitude_matrix = compute_attitude_matrix(
+                position_km, velocity_km,
+                mode=spec.attitude_mode, sun_direction=sun_direction,
+            )
     elif spec.propagator is not None:
         # 数値伝播（摂動付き）。姿勢は別途 attitude_mode に従って構成する。
         position_km, velocity_km = spec.propagator.state_at(time_s)
@@ -348,6 +350,7 @@ def resolve_camera(states: List[ObjectState], config: RenderConfig) -> Tuple[Seq
                 config.camera.target_lon,
                 config.camera.target_alt_km,
             )
+            target_km = rotate_vector_z(target_km, compute_earth_rotation_deg(camera_obj.time_s, config))
             camera_target = (target_km * SCALE_FACTOR).tolist()
         else:
             # デフォルトは地球中心（NADIR 撮像）。
@@ -415,6 +418,16 @@ def resolve_camera(states: List[ObjectState], config: RenderConfig) -> Tuple[Seq
     return camera_position, camera_target, camera_up, fov
 
 
+def compute_earth_rotation_deg(time_s: float, config: RenderConfig) -> float:
+    """地表ターゲット・バッチ・ライブ描画が共用する地球自転角。"""
+    if not config.earth.earth_rotation:
+        return 0.0
+    seconds_per_day = config.earth.earth_rotation_period_hours * 3600.0
+    if not np.isfinite(seconds_per_day) or seconds_per_day <= 0:
+        raise ValueError('earth_rotation_period_hours は有限の正数である必要があります')
+    return (time_s / seconds_per_day) * 360.0 * config.earth.earth_rotation_speed
+
+
 def build_earth_textures(
     output_dir: Path,
     frame: int,
@@ -433,11 +446,7 @@ def build_earth_textures(
     - 雲: cloud_opacity が 1.0 でなければ EXR を生成（内容はフレーム非依存なので
       ラン中 1 度だけ）、1.0 ならテクスチャを直接使う
     """
-    earth_rotation_deg = 0.0
-    if config.earth.earth_rotation:
-        # 1 恒星日 ≒ 86164 s。preset では実時間スケールに合わせて調整可能。
-        seconds_per_day = config.earth.earth_rotation_period_hours * 3600.0
-        earth_rotation_deg = (time_s / seconds_per_day) * 360.0 * config.earth.earth_rotation_speed
+    earth_rotation_deg = compute_earth_rotation_deg(time_s, config)
 
     night_emission_texture: Optional[Path] = None
     cloud_opacity_texture: Optional[Path] = None

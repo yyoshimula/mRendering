@@ -1,6 +1,6 @@
 # KUPT（ペガスス天文観測室、九大 元岡、口径 40 cm）の実機較正済みプリセット
 #
-# 実データ検証（tools/groundobs_validation/ANALYSIS.md、2025-02-18 EKRAN 観測 @KUPT）
+# 実データ検証（internal/groundobs_validation/ANALYSIS.md、2025-02-18 EKRAN 観測 @KUPT）
 # で実測・確定した機材定数を焼き込んである。GEO 観測のシミュレーションを実観測と
 # 同条件で回すためのベース。軌道・ターゲットは用途に応じて上書きすること。
 #

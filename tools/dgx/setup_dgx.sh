@@ -21,7 +21,6 @@ echo "== 依存インストール =="
 # mitsuba は wheel が無い環境（aarch64 Linux）だと失敗しうるので分離して試す
 grep -v '^mitsuba' requirements.txt > /tmp/req_nomitsuba.txt
 pip install -r /tmp/req_nomitsuba.txt
-pip install -r yoshimulib/requirements.txt
 if ! pip install "$(grep '^mitsuba' requirements.txt)"; then
     echo ""
     echo "!! mitsuba の pip インストールに失敗（この CPU アーキテクチャ用 wheel が"

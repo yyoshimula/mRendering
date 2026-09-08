@@ -19,7 +19,7 @@
     - 衛星 procedural モデルは scale パラメータ (シーン単位) を基準に倍率で寸法を決める
       代表値: scale=0.001 で「ISS の 1/2 本体長」程度に見える
     - 本体: 1.5 x 1.5 x 2.0 (XYZ 倍率 × scale)
-      ソーラーパネル: 2.5 x 0.05 x 1.5 を本体の左右 ±3.0×scale に配置
+      ソーラーパネル: 2.5 x 1.5 x 0.05 を本体の左右 ±3.0×scale に配置（法線±Z）
       アンテナ: 直径 0.6×scale、高さ 1.5×scale を本体上 +2.5×scale に配置
 
 材質 (BSDF) 解決:
@@ -164,7 +164,7 @@ def create_satellite(position: np.ndarray, attitude_matrix: np.ndarray, scale: f
     寸法はすべて scale (シーン単位) を基準に倍率で決まる:
 
         本体           : cube  1.5 x 1.5 x 2.0  (中央)
-        ソーラーパネル : cube  2.5 x 0.05 x 1.5 (本体左右 ±3.0)
+        ソーラーパネル : cube  2.5 x 1.5 x 0.05 (本体左右 ±3.0、法線±Z)
         アンテナ       : cyl   0.3 x 0.3 x 1.5  (本体上 +2.5、円筒は Z 軸が長軸)
 
     use_advanced_materials=True で MaterialLibrary 由来の物理 BSDF
@@ -206,9 +206,9 @@ def create_satellite(position: np.ndarray, attitude_matrix: np.ndarray, scale: f
     }
 
     # 2. ソーラーパネル（左）
-    # 本体の左 (-X 方向) に伸びる薄い板。Y 厚を 0.05 と極小にして板状にする
+    # sun_tracking の +Z 指向に広い受光面を揃える。外部モデルの軸は変更しない。
     panel_left_transform = mi.ScalarTransform4f.translate([-scale * 3.0, 0, 0])
-    panel_scale = mi.ScalarTransform4f.scale([scale * 2.5, scale * 0.05, scale * 1.5])
+    panel_scale = mi.ScalarTransform4f.scale([scale * 2.5, scale * 1.5, scale * 0.05])
     if use_advanced_materials:
         panel_bsdf = mat_lib.get_solar_panel_material()
     else:

@@ -1,0 +1,298 @@
+{
+  "model": "ekran.obj",
+  "label": "EKRAN",
+  "source": "EKRAN.blend",
+  "units": "m",
+  "up_axis": "Z",
+  "parts": {
+    "mat_0_EKRAN_HullGreen": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.36000001430511475,
+          0.5,
+          0.30000001192092896
+        ]
+      },
+      "metallic": 0.05000000074505806,
+      "roughness": 0.550000011920929
+    },
+    "mat_1_EKRAN_HullGreenDark": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.2199999988079071,
+          0.3199999928474426,
+          0.1899999976158142
+        ]
+      },
+      "metallic": 0.05000000074505806,
+      "roughness": 0.6000000238418579
+    },
+    "mat_2_EKRAN_Ring": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.8500000238418579,
+          0.8600000143051147,
+          0.8399999737739563
+        ]
+      },
+      "metallic": 0.8999999761581421,
+      "roughness": 0.30000001192092896
+    },
+    "mat_3_EKRAN_DrumCells": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.800000011920929,
+          0.800000011920929,
+          0.800000011920929
+        ]
+      },
+      "metallic": 0.4000000059604645,
+      "roughness": 0.30000001192092896
+    },
+    "mat_4_EKRAN_AluminizedThermalBlanket": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.5799999833106995,
+          0.49000000953674316,
+          0.28999999165534973
+        ]
+      },
+      "metallic": 0.8199999928474426,
+      "roughness": 0.3799999952316284
+    },
+    "mat_5_EKRAN_ArrayPanel": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.8999999761581421,
+          0.8999999761581421,
+          0.8799999952316284
+        ]
+      },
+      "metallic": 0.0,
+      "roughness": 0.6000000238418579
+    },
+    "mat_6_EKRAN_Structure": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.8199999928474426,
+          0.8199999928474426,
+          0.800000011920929
+        ]
+      },
+      "metallic": 0.6000000238418579,
+      "roughness": 0.44999998807907104
+    },
+    "mat_7_EKRAN_HelixCup": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.8600000143051147,
+          0.8600000143051147,
+          0.8199999928474426
+        ]
+      },
+      "metallic": 0.10000000149011612,
+      "roughness": 0.550000011920929
+    },
+    "mat_8_EKRAN_Helix": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.47999998927116394,
+          0.4000000059604645,
+          0.23999999463558197
+        ]
+      },
+      "metallic": 0.75,
+      "roughness": 0.30000001192092896
+    },
+    "mat_9_EKRAN_White": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.8999999761581421,
+          0.8999999761581421,
+          0.8799999952316284
+        ]
+      },
+      "metallic": 0.0,
+      "roughness": 0.550000011920929
+    },
+    "mat_10_EKRAN_Ceramic": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.7799999713897705,
+          0.699999988079071,
+          0.5
+        ]
+      },
+      "metallic": 0.0,
+      "roughness": 0.3799999952316284
+    },
+    "mat_11_EKRAN_Equipment": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.550000011920929,
+          0.6200000047683716,
+          0.5799999833106995
+        ]
+      },
+      "metallic": 0.30000001192092896,
+      "roughness": 0.550000011920929
+    },
+    "mat_12_EKRAN_CableJacket": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.02800000086426735,
+          0.02199999988079071,
+          0.01600000075995922
+        ]
+      },
+      "metallic": 0.05000000074505806,
+      "roughness": 0.6499999761581421
+    },
+    "mat_13_EKRAN_Dark": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.05999999865889549,
+          0.05999999865889549,
+          0.05999999865889549
+        ]
+      },
+      "metallic": 0.20000000298023224,
+      "roughness": 0.699999988079071
+    },
+    "mat_14_EKRAN_PanelBack": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.699999988079071,
+          0.699999988079071,
+          0.6800000071525574
+        ]
+      },
+      "metallic": 0.0,
+      "roughness": 0.699999988079071
+    },
+    "mat_15_EKRAN_Frame": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.30000001192092896,
+          0.3100000023841858,
+          0.3199999928474426
+        ]
+      },
+      "metallic": 0.6000000238418579,
+      "roughness": 0.5
+    },
+    "mat_16_EKRAN_SiliconCellGeometry": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.027000000700354576,
+          0.052000001072883606,
+          0.10000000149011612
+        ]
+      },
+      "metallic": 0.550000011920929,
+      "roughness": 0.2800000011920929
+    },
+    "mat_17_EKRAN_Nozzle": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.2199999988079071,
+          0.20000000298023224,
+          0.18000000715255737
+        ]
+      },
+      "metallic": 0.8999999761581421,
+      "roughness": 0.4000000059604645
+    },
+    "mat_18_EKRAN_BlueCircularCovers": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.11999999731779099,
+          0.36000001430511475,
+          0.47999998927116394
+        ]
+      },
+      "metallic": 0.3499999940395355,
+      "roughness": 0.28999999165534973
+    },
+    "mat_19_Scale_Person": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.8500000238418579,
+          0.15000000596046448,
+          0.15000000596046448
+        ]
+      },
+      "metallic": 0.0,
+      "roughness": 0.6000000238418579
+    },
+    "mat_20_EKRAN_Accent": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.949999988079071,
+          0.44999998807907104,
+          0.10000000149011612
+        ]
+      },
+      "metallic": 0.0,
+      "roughness": 0.5
+    }
+  },
+  "default": {},
+  "source_objects": 981,
+  "triangles": 272119,
+  "bounds": [
+    [
+      -3.0926246643066406,
+      -6.800000190734863,
+      -2.75
+    ],
+    [
+      3.0998246669769287,
+      6.800000190734863,
+      2.609999895095825
+    ]
+  ],
+  "notes": "Materials approximate Blender Principled BSDF. Procedural shader nodes are not baked."
+}

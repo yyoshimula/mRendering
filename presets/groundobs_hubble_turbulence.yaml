@@ -16,7 +16,7 @@
 #   # 低品質プレビュー:
 #   python mrender.py groundobs --config presets/groundobs_hubble_turbulence.yaml --frames 5 --samples 32
 #
-# 検証: tools/groundobs_validation/turbulence_validation.py
+# 検証: internal/groundobs_validation/turbulence_validation.py
 #   （位相構造関数 / 長露光 FWHM=シーイング / flux 保存）
 
 time:

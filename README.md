@@ -30,6 +30,34 @@ Mitsuba 3を使用して、ケプラー軌道要素に基づいた物理的に�
 
 ## セットアップ
 
+### 配布版のセットアップ（学生・外部研究者向け）
+
+GitHub の private repo を collaborator として招待された場合の手順。
+
+```bash
+git clone https://github.com/yyoshimula/mRendering.git
+cd mRendering
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+python mrender.py gui                 # http://127.0.0.1:8600 が開く
+```
+
+- **Python 3.11 以上**が必要（開発は 3.11）。Mitsuba は pip で入る CPU 版
+  （`llvm_ad_rgb`）で全機能が動く。Apple Silicon の Mac で動作確認済み。
+- **`assets/starfield.exr`（287 MB）は clone に含まれない**。GitHub の
+  100 MB 上限を超えるため Git 管理外で、初回起動時に `tools/generate_starfield.py`
+  が HYG カタログから自動生成する（約 1 秒、毎回同じ内容）。
+- **NASA Blue Marble の 500 m/px タイル**は任意。地球背景を高解像度にしたい
+  場合だけ `python tools/prepare_bmng.py` で取得する（無くても既定テクスチャで動く）。
+- **Blender は必須ではない**。Draco 圧縮 GLB を初めて読み込む時の変換にのみ使う。
+- **AI ドロワー**（GUI ヘッダーの「🤖 AI」）は、ローカルに `claude` CLI が
+  あれば自動で有効になる。無ければボタンが出ないだけ。
+- **`gui_hosts.json`**（リモート実行マシンの定義）は Git 管理外。必要なら
+  `cp gui_hosts.example.json gui_hosts.json` してから編集する。
+- **`internal/` は研究室内限定のデータ**（共同研究由来のモデルと実観測検証）で、
+  GitHub には含まれない。無くても全機能が動く。
+- GPU（DGX Spark）で回したい研究室メンバーは [tools/dgx/README.md](tools/dgx/README.md) を参照。
+
 ### 1. 仮想環境の作成とアクティベート
 
 ```bash
@@ -71,11 +99,38 @@ GUI サーバーをバックグラウンド起動して Chrome/Edge/Brave の ap
 
 GUI でできること:
 
-- **verb 選択 → プリセット読込 → フォーム編集 → レンダリング開始**（ジョブは
+- **シナリオ → ターゲット → プリセット → 調整**: 上部の「絶対軌道・相対軌道・
+  地上観測」を選び、ターゲットに対応するプリセットを選択すると自動で読み込む。
+  タブを往復しても、そのページで編集中の値・開いていた設定欄を復元する。
+  相対軌道ではchief・deputyを個別に選択し、chiefをHill原点 [0,0,0] kmに固定する。
+  `relative_frame: hill`（既定）では相対位置はHill/RTN成分で、chiefの姿勢とは独立。
+  旧形式のchief機体系の位置データには `relative_frame: chief` を指定する。
+  カメラはchief→deputy、chief fixed、deputy→chief、deputy fixed、外部・手動を選べる。
+  fixedは搭載機の姿勢に追従する固定視線で、追尾は相手機の中心を毎フレーム注視する。
+  `camera_offset` / `camera_direction` / `camera_body_up` は搭載機の機体系で指定。
+  機載カメラでは搭載側のモデルを非表示にする。
+  「モデル確認」はブラウザ内でOBJ/PLY/GLB/glTFを直接表示する専用モード（Three.jsを同梱、CDN接続不要）。
+  Mitsubaやリモートワーカーを使わず、モデル読込後のマウス操作・表示切替はブラウザ内だけで完結する。
+  モデルを選ぶと全体が収まるように表示し、ドラッグで視点回転、ホイールで拡大縮小する。
+  座標軸はモデル中心に置き、元モデルの軸方向を保つ。
+  面表示・面＋ワイヤーフレーム・ワイヤーフレームのみを切り替えられる。
+  材質はリアルタイム表示用の近似で、物理レンダリングとは異なる。
+  「モデルの材質を使用」をONにすると、あかつき・Hubble・yKwnは登録プリセットの
+  パーツ別材質を適用する（OFFでは形状確認用の一様なグレー）。
+  ワイヤーは三角形メッシュの辺を表示し、「ワイヤーフレームのみ」では裏側の辺も見える。
+  モデル確認ではDraco圧縮GLBも同梱デコーダで直接読み込む。通常のMitsubaレンダリング用の
+  Draco圧縮GLBの初回変換にはBlenderが必要（PATH上、またはmacOSの標準インストール先から検出）。
+  変換済みOBJは再利用し、全頂点が潰れた不正なOBJは元GLBから再生成する。従来の全 verb は「その他の実行モード」から選べる。
+- **左で設定、右でライブプレビュー**: ライブプレビューは起動時 ON。
+  視点と動画作成は上部で変更でき、軌道・材質・望遠鏡などの詳細設定は折りたたみ欄に残る。
+  通常プリセットの選択は設定を置き換え、地球背景の差分プリセットは追加適用する。
+- **プリセット保存**: GUI から保存した YAML はコメントにシナリオ・ターゲット情報を持ち、
+  再起動後も同じ分類に表示される。分類のない独自 YAML は「カスタム」から読み込める。
+- **レンダリング開始**（ジョブは
   `runs/_gui_configs/` に YAML を書き出してサブプロセス実行。進捗・最新フレーム・
   過去ラン一覧・動画リンクも GUI 上に表示）
 - **YAML 表示 / プリセット保存**: フォーム内容をそのまま `presets/*.yaml` に保存
-- **ライブプレビュー**（右カラムの「ライブプレビュー ON」）: Blender の
+- **ライブプレビュー**（右カラムの「ライブプレビュー OFF」で停止可）: Blender の
   レンダープレビュー風ビューポート。フォーム変更で即再レンダ（~0.3 s）、
   アイドル時にフル解像度へ自動リファイン。
   - 左ドラッグ=オービット / ホイール=ドリー / Shift+ドラッグ=パン
@@ -83,7 +138,7 @@ GUI でできること:
   - タイムラインスライダーで tumble/csv の姿勢スクラブ、太陽方位/仰角スライダー
   - リファイン画像は本番出力とピクセル一致（render 系はビット一致）
   - 操作中は簡易描画（~0.1-0.2 s）に自動で切り替わり、手を離すと通常品質へ
-- **実行マシン切替**（ヘッダーの「実行マシン」）: ジョブ・ライブプレビューを
+- **実行マシン切替**（右上、AI ボタン横の「実行マシン」）: ジョブ・ライブプレビューを
   local / リモート GPU（例: dgx = DGX Spark）で実行。リモート定義は
   `gui_hosts.json`、結果は `runs/` へ自動ミラー。**事前に
   `tools/dgx/sync_to_dgx.sh` でコード・アセットの同期が必要**（モデルや
@@ -95,6 +150,14 @@ GUI でできること:
   可視域だけ取得して背景にする。OFF でも既定で BMNG 500 m/px タイル
   （`assets/textures/earth_day_500m/`、無ければ `tools/prepare_bmng.py` で生成）
   から可視域クロップが効く
+
+### 追加モデルライブラリ
+
+モデル確認・chief・deputyのモデル一覧には、`models/library/` の追加モデルも表示されます。
+ACS3、BlueWalker-3、EKRAN、H-IIA上段（ADRAS-J）を取り込み済みです。
+非公開モデル（共同研究由来）は `internal/` に置き、研究室内でのみ配布します。
+材質・テクスチャ・単位と再取り込み手順は [models/library/README.md](models/library/README.md) を参照。
+生成OBJ・テクスチャはGit管理外のため、別マシンでは再生成またはアセット同期が必要です。
 
 ## 使用方法（CLI）
 

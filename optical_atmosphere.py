@@ -266,16 +266,14 @@ def compute_atmospheric_scattering(
         # 本来は太陽方向にも経路積分が必要だが、ここでは
         #     τ_sun ≈ ρ(h) * β * H
         # の単点近似（指数大気の鉛直積分の閉じた形）で済ませている
-        sun_ray_end = sample_pos + sun_dir * params.atmosphere_top * 2
-
-        sun_optical_depth_rayleigh = rayleigh_density * params.rayleigh_coeff * params.rayleigh_scale_height
+        sun_optical_depth_rayleigh = rayleigh_density * rayleigh_coeffs * params.rayleigh_scale_height
         sun_optical_depth_mie = mie_density * params.mie_coeff * params.mie_scale_height
 
         # 各波長での透過率（太陽→サンプル点→視点の合計光学的厚さ）
         # I/I0 = exp(-τ_total)
         attenuation = np.exp(
-            -(rayleigh_coeffs * (sun_optical_depth_rayleigh + view_optical_depth_rayleigh) +
-              params.mie_coeff * (sun_optical_depth_mie + view_optical_depth_mie))
+            -(sun_optical_depth_rayleigh + view_optical_depth_rayleigh +
+              sun_optical_depth_mie + view_optical_depth_mie)
         )
 
         # 散乱光の蓄積: dL = ρ * β * T * P(θ) * ds
@@ -290,8 +288,8 @@ def compute_atmospheric_scattering(
     in_scatter = rayleigh_sum + mie_sum
 
     # 視線方向の総透過率（背景物体の色を減衰させる係数）
-    transmittance = np.exp(-(rayleigh_coeffs * view_optical_depth_rayleigh +
-                             params.mie_coeff * view_optical_depth_mie))
+    # optical_depth は既に ∫ρβ ds（無次元）。βを再度掛けない。
+    transmittance = np.exp(-(view_optical_depth_rayleigh + view_optical_depth_mie))
 
     # 表示用に [0, 1] にクランプ（HDR を扱いたい場合は呼び出し側で外す）
     in_scatter = np.clip(in_scatter, 0, 1)
@@ -342,7 +340,8 @@ def compute_earth_albedo(
     solid_angle = 2 * np.pi * (1 - np.sqrt(1 - sin_half_angle**2))
 
     # 地球表面が太陽を向いているか（昼側のみ反射に寄与）
-    cos_earth_sun = np.dot(to_earth_center_norm, sun_dir)
+    # 可視地球面の外向き法線は「地球→衛星」。衛星→地球とは逆向き。
+    cos_earth_sun = np.dot(-to_earth_center_norm, sun_dir)
     if cos_earth_sun < 0:
         cos_earth_sun = 0  # 夜側は寄与なし
 

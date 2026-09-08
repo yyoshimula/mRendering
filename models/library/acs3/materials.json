@@ -1,0 +1,246 @@
+{
+  "model": "acs3.obj",
+  "label": "ACS3",
+  "source": "ACS3.blend",
+  "units": "m",
+  "up_axis": "Z",
+  "parts": {
+    "mat_0_ACS3_SailMembrane": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.800000011920929,
+          0.800000011920929,
+          0.800000011920929
+        ]
+      },
+      "metallic": 0.8999999761581421,
+      "roughness": 0.25999999046325684
+    },
+    "mat_1_ACS3_BoomComposite": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.09000000357627869,
+          0.09000000357627869,
+          0.10000000149011612
+        ]
+      },
+      "metallic": 0.3499999940395355,
+      "roughness": 0.44999998807907104
+    },
+    "mat_2_ACS3_BoomTip": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.7200000286102295,
+          0.7300000190734863,
+          0.7400000095367432
+        ]
+      },
+      "metallic": 0.8999999761581421,
+      "roughness": 0.3499999940395355
+    },
+    "mat_3_ACS3_Aluminium": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.7799999713897705,
+          0.7900000214576721,
+          0.800000011920929
+        ]
+      },
+      "metallic": 0.8999999761581421,
+      "roughness": 0.3499999940395355
+    },
+    "mat_4_ACS3_TensionCord": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.8500000238418579,
+          0.8199999928474426,
+          0.699999988079071
+        ]
+      },
+      "metallic": 0.0,
+      "roughness": 0.6000000238418579
+    },
+    "mat_5_ACS3_BondedSeam": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.5299999713897705,
+          0.5099999904632568,
+          0.4399999976158142
+        ]
+      },
+      "metallic": 0.75,
+      "roughness": 0.3700000047683716
+    },
+    "mat_6_ACS3_PanelDark": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.07999999821186066,
+          0.07999999821186066,
+          0.09000000357627869
+        ]
+      },
+      "metallic": 0.30000001192092896,
+      "roughness": 0.44999998807907104
+    },
+    "mat_7_ACS3_Dark": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.05000000074505806,
+          0.05000000074505806,
+          0.05000000074505806
+        ]
+      },
+      "metallic": 0.30000001192092896,
+      "roughness": 0.4000000059604645
+    },
+    "mat_8_ACS3_SolarCell": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.800000011920929,
+          0.800000011920929,
+          0.800000011920929
+        ]
+      },
+      "metallic": 0.30000001192092896,
+      "roughness": 0.25
+    },
+    "mat_9_ACS3_PCB": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.02500000037252903,
+          0.15000000596046448,
+          0.054999999701976776
+        ]
+      },
+      "metallic": 0.15000000596046448,
+      "roughness": 0.6000000238418579
+    },
+    "mat_10_ACS3_SailSpool": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.4300000071525574,
+          0.3499999940395355,
+          0.20000000298023224
+        ]
+      },
+      "metallic": 0.6499999761581421,
+      "roughness": 0.4000000059604645
+    },
+    "mat_11_ACS3_ClippedSolarCell": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.017999999225139618,
+          0.029999999329447746,
+          0.06499999761581421
+        ]
+      },
+      "metallic": 0.3499999940395355,
+      "roughness": 0.3799999952316284
+    },
+    "mat_12_ACS3_Lens": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.05000000074505806,
+          0.07999999821186066,
+          0.11999999731779099
+        ]
+      },
+      "metallic": 0.20000000298023224,
+      "roughness": 0.05000000074505806
+    },
+    "mat_13_ACS3_White": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.9200000166893005,
+          0.9200000166893005,
+          0.8999999761581421
+        ]
+      },
+      "metallic": 0.05000000074505806,
+      "roughness": 0.44999998807907104
+    },
+    "mat_14_ACS3_TapeAntenna": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.800000011920929,
+          0.800000011920929,
+          0.7799999713897705
+        ]
+      },
+      "metallic": 0.8999999761581421,
+      "roughness": 0.30000001192092896
+    },
+    "mat_15_Scale_Person": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.44999998807907104,
+          0.47999998927116394,
+          0.5199999809265137
+        ]
+      },
+      "metallic": 0.0,
+      "roughness": 0.699999988079071
+    },
+    "mat_16_ACS3_Accent": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.15000000596046448,
+          0.44999998807907104,
+          0.8500000238418579
+        ]
+      },
+      "metallic": 0.20000000298023224,
+      "roughness": 0.30000001192092896
+    }
+  },
+  "default": {},
+  "source_objects": 427,
+  "triangles": 413816,
+  "bounds": [
+    [
+      -5.915399551391602,
+      -4.967425346374512,
+      -0.4022499918937683
+    ],
+    [
+      5.899399757385254,
+      4.967425346374512,
+      0.3799999952316284
+    ]
+  ],
+  "notes": "Materials approximate Blender Principled BSDF. Procedural shader nodes are not baked."
+}

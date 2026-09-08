@@ -14,7 +14,9 @@ DGX_DIR="${DGX_DIR:-mRendering}"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 echo "== rsync ${REPO_ROOT}/ -> ${DGX_HOST}:${DGX_DIR}/ =="
-# --copy-unsafe-links: yoshimulib はリポジトリ外への symlink なので実体をコピーする
+# --copy-unsafe-links: リポジトリ外を指す symlink があれば実体をコピーする
+# （yoshimulib は 2026-09 に同梱へ移行したので現状は該当なし。将来の保険）
+# internal/ は除外しない — 研究室内配布はこの同期経路で行う
 rsync -avz --delete --copy-unsafe-links \
     --exclude 'venv/' \
     --exclude 'runs/' \

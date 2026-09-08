@@ -1,0 +1,108 @@
+{
+  "model": "h2a_adrasj.obj",
+  "label": "H-IIA上段（ADRAS-J）",
+  "source": "H2A_ADRASJ/H2A_ADRASJ.blend",
+  "units": "m",
+  "up_axis": "Z",
+  "parts": {
+    "mat_0_Aged_PIF_brown": {
+      "type": "principled",
+      "base_color": {
+        "type": "bitmap",
+        "filename": "models/library/h2a_adrasj/textures/aged_foam_albedo.png"
+      },
+      "metallic": 0.019999999552965164,
+      "roughness": 0.8500000238418579
+    },
+    "mat_1_Aluminium_structure": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.5699999928474426,
+          0.6000000238418579,
+          0.6399999856948853
+        ]
+      },
+      "metallic": 0.8600000143051147,
+      "roughness": 0.28999999165534973
+    },
+    "mat_2_Wrinkled_aluminized_blanket": {
+      "type": "principled",
+      "base_color": {
+        "type": "bitmap",
+        "filename": "models/library/h2a_adrasj/textures/aluminium_blanket_albedo.png"
+      },
+      "metallic": 0.9599999785423279,
+      "roughness": 0.23000000417232513
+    },
+    "mat_3_PSS_silver_white": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.6899999976158142,
+          0.699999988079071,
+          0.6899999976158142
+        ]
+      },
+      "metallic": 0.6800000071525574,
+      "roughness": 0.3199999928474426
+    },
+    "mat_4_Engine_dark_metal": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.054999999701976776,
+          0.06499999761581421,
+          0.07500000298023224
+        ]
+      },
+      "metallic": 0.8199999928474426,
+      "roughness": 0.4000000059604645
+    },
+    "mat_5_Engine_amber_blanket": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.33000001311302185,
+          0.1899999976158142,
+          0.0729999989271164
+        ]
+      },
+      "metallic": 0.8199999928474426,
+      "roughness": 0.3199999928474426
+    },
+    "mat_6_Cavity_and_harness": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.012000000104308128,
+          0.014999999664723873,
+          0.01899999938905239
+        ]
+      },
+      "metallic": 0.10000000149011612,
+      "roughness": 0.6899999976158142
+    }
+  },
+  "default": {},
+  "source_objects": 318,
+  "triangles": 399580,
+  "bounds": [
+    [
+      -2.052500009536743,
+      -2.052500009536743,
+      -5.400000095367432
+    ],
+    [
+      2.052500009536743,
+      2.0579333305358887,
+      5.414000034332275
+    ]
+  ],
+  "notes": "Materials approximate Blender Principled BSDF. Procedural shader nodes are not baked."
+}

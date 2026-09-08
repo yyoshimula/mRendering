@@ -33,7 +33,7 @@ verb との関係:
   - config_loader.py  : load_yaml_config（1 段フラット化、Mitsuba 非依存）
 
 yoshimulib 使用関数:
-  - q_prop_mat: クォータニオン離散伝播行列 Φ(ω, dt)（scene_common 側で使用）
+  - q_kine   : クォータニオン微分（scene_common で角速度と連立積分）
   - q2dcm     : クォータニオン → 姿勢行列 A(q)（= inertial→body。
                 body→inertial が要るときは転置する）
 

@@ -213,14 +213,13 @@ def create_kapton_mli_bsdf() -> Dict[str, Any]:
     断熱材。表面はキラキラした金色の鏡面反射と、シワによる拡散反射が混在する。
     Mitsuba の `blendbsdf` で 70% conductor + 30% diffuse の重ね合わせとして表現。
       - weight: bsdf_0 と bsdf_1 の混合比（1.0 = bsdf_1 のみ）
-      - 注意: weight の意味は Mitsuba のバージョンに依存
 
     Returns:
         Mitsuba BSDF辞書
     """
     return {
         'type': 'blendbsdf',
-        'weight': 0.7,  # 70%鏡面反射
+        'weight': 0.3,  # bsdf_1（拡散）30%、bsdf_0（鏡面）70%
         'bsdf_0': {
             'type': 'conductor',
             'material': 'Au',

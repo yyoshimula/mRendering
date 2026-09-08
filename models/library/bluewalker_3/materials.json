@@ -1,0 +1,272 @@
+{
+  "model": "bluewalker_3.obj",
+  "label": "BlueWalker-3",
+  "source": "BlueWalker-3.blend",
+  "units": "m",
+  "up_axis": "Z",
+  "parts": {
+    "mat_0_BW3_Substrate": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.10000000149011612,
+          0.10000000149011612,
+          0.10999999940395355
+        ]
+      },
+      "metallic": 0.10000000149011612,
+      "roughness": 0.6499999761581421
+    },
+    "mat_1_BW3_Frame": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.6200000047683716,
+          0.6299999952316284,
+          0.6399999856948853
+        ]
+      },
+      "metallic": 0.699999988079071,
+      "roughness": 0.4000000059604645
+    },
+    "mat_2_BW3_Hinge": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.75,
+          0.75,
+          0.7300000190734863
+        ]
+      },
+      "metallic": 0.8999999761581421,
+      "roughness": 0.3499999940395355
+    },
+    "mat_3_BW3_MLI_Gold": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.699999988079071,
+          0.5199999809265137,
+          0.20000000298023224
+        ]
+      },
+      "metallic": 0.8500000238418579,
+      "roughness": 0.30000001192092896
+    },
+    "mat_4_BW3_AntennaGround": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.800000011920929,
+          0.800000011920929,
+          0.7300000190734863
+        ]
+      },
+      "metallic": 0.15000000596046448,
+      "roughness": 0.5
+    },
+    "mat_5_BW3_Patch": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.75,
+          0.6499999761581421,
+          0.3799999952316284
+        ]
+      },
+      "metallic": 0.44999998807907104,
+      "roughness": 0.4000000059604645
+    },
+    "mat_6_BW3_AntennaDielectric": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.7900000214576721,
+          0.7699999809265137,
+          0.6600000262260437
+        ]
+      },
+      "metallic": 0.11999999731779099,
+      "roughness": 0.550000011920929
+    },
+    "mat_7_BW3_HubDeck": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.30000001192092896,
+          0.3100000023841858,
+          0.3199999928474426
+        ]
+      },
+      "metallic": 0.6000000238418579,
+      "roughness": 0.44999998807907104
+    },
+    "mat_8_BW3_Silicon": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.02199999988079071,
+          0.041999999433755875,
+          0.08299999684095383
+        ]
+      },
+      "metallic": 0.550000011920929,
+      "roughness": 0.27000001072883606
+    },
+    "mat_9_BW3_Aluminium": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.7799999713897705,
+          0.7900000214576721,
+          0.800000011920929
+        ]
+      },
+      "metallic": 0.8999999761581421,
+      "roughness": 0.3499999940395355
+    },
+    "mat_10_BW3_MLI_Black": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.05000000074505806,
+          0.05000000074505806,
+          0.05000000074505806
+        ]
+      },
+      "metallic": 0.30000001192092896,
+      "roughness": 0.44999998807907104
+    },
+    "mat_11_BW3_White": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.9200000166893005,
+          0.9200000166893005,
+          0.8999999761581421
+        ]
+      },
+      "metallic": 0.05000000074505806,
+      "roughness": 0.44999998807907104
+    },
+    "mat_12_BW3_Radiator": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.8600000143051147,
+          0.8799999952316284,
+          0.8999999761581421
+        ]
+      },
+      "metallic": 0.699999988079071,
+      "roughness": 0.20000000298023224
+    },
+    "mat_13_BW3_Dark": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.05000000074505806,
+          0.05000000074505806,
+          0.05000000074505806
+        ]
+      },
+      "metallic": 0.30000001192092896,
+      "roughness": 0.4000000059604645
+    },
+    "mat_14_BW3_Dish": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.8799999952316284,
+          0.8799999952316284,
+          0.8600000143051147
+        ]
+      },
+      "metallic": 0.550000011920929,
+      "roughness": 0.2199999988079071
+    },
+    "mat_15_BW3_Nozzle": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.25,
+          0.23000000417232513,
+          0.20000000298023224
+        ]
+      },
+      "metallic": 0.8999999761581421,
+      "roughness": 0.4000000059604645
+    },
+    "mat_16_BW3_LVA": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.550000011920929,
+          0.5600000023841858,
+          0.5799999833106995
+        ]
+      },
+      "metallic": 0.800000011920929,
+      "roughness": 0.4000000059604645
+    },
+    "mat_17_Scale_Person": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.44999998807907104,
+          0.47999998927116394,
+          0.5199999809265137
+        ]
+      },
+      "metallic": 0.0,
+      "roughness": 0.699999988079071
+    },
+    "mat_18_BW3_Accent": {
+      "type": "principled",
+      "base_color": {
+        "type": "rgb",
+        "value": [
+          0.15000000596046448,
+          0.44999998807907104,
+          0.8500000238418579
+        ]
+      },
+      "metallic": 0.20000000298023224,
+      "roughness": 0.30000001192092896
+    }
+  },
+  "default": {},
+  "source_objects": 2253,
+  "triangles": 887797,
+  "bounds": [
+    [
+      -4.99839973449707,
+      -4.318572521209717,
+      -0.3799999952316284
+    ],
+    [
+      5.0027995109558105,
+      4.318572521209717,
+      1.5734513998031616
+    ]
+  ],
+  "notes": "Materials approximate Blender Principled BSDF. Procedural shader nodes are not baked."
+}

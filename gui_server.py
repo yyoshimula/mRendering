@@ -32,6 +32,8 @@ import os
 import re
 import shutil
 import signal
+import secrets
+import shlex
 import socket
 import subprocess
 import sys
@@ -198,7 +200,9 @@ RELATIVE_SECTIONS: List[Dict[str, Any]] = [
           options=['static', 'csv', 'tumble', 'absolute'],
           help='static=固定 / csv=時系列再生 / tumble=deputy タンブリング / '
                'absolute=絶対軌道 2 本から相対状態+環境を導出'),
-        F('rel_position', '相対位置 [km]（RTN）', 'vec3'),
+        F('rel_position', 'deputy 相対位置 [km]', 'vec3'),
+        F('relative_frame', '相対位置の座標系', 'select', options=['hill', 'chief'],
+          help='hill=Hill/RTN（chief原点）、chief=旧形式のchief機体系'),
         F('rel_quat', '相対姿勢 [qx qy qz qw]', 'vec4',
           help='absolute+tumble では t=0 の RTN 相対初期姿勢'),
         F('rel_csv', '相対状態 CSV', 'file', kind='csv', optional=True,
@@ -232,7 +236,9 @@ RELATIVE_SECTIONS: List[Dict[str, Any]] = [
         F('hide_chief', 'chief を描画しない（カメラ=機載視点）', 'bool'),
         F('chief_model', 'chief モデル', 'file', kind='model', optional=True),
         F('chief_scale', 'chief スケール', 'float', step=0.0001),
-        F('chief_position', 'chief 位置', 'vec3'),
+        F('chief_position', 'chief 位置 [km]', 'vec3', readonly=True, help='Hill座標系の原点 [0, 0, 0] に固定'),
+        F('chief_parts', 'パーツ別 BSDF (YAML)', 'yaml', rows=6, optional=True),
+        F('chief_bsdf', 'デフォルト BSDF (YAML)', 'yaml', rows=4, optional=True),
         F('chief_quat', 'chief 姿勢 [qx qy qz qw]', 'vec4'),
     ]},
     {'title': 'deputy（ターゲット側）', 'fields': [
@@ -245,6 +251,10 @@ RELATIVE_SECTIONS: List[Dict[str, Any]] = [
         F('deputy_bsdf', 'デフォルト BSDF (YAML)', 'yaml', rows=4, optional=True),
     ]},
     {'title': 'カメラ', 'fields': [
+        F('camera_mode', 'カメラモード', 'select', options=['manual', 'chief_to_deputy', 'chief_fixed', 'deputy_to_chief', 'deputy_fixed']),
+        F('camera_offset', '取付位置 [km・機体系]', 'vec3'),
+        F('camera_direction', '固定視線方向・機体系', 'vec3', help='fixed のときのみ使用'),
+        F('camera_body_up', '上方向・機体系', 'vec3'),
         F('camera_origin', 'カメラ位置 [km]', 'vec3'),
         F('camera_target', '注視点 [km]', 'vec3'),
         F('camera_fov', 'FOV [deg]', 'float'),
@@ -469,8 +479,17 @@ def build_verb_schema() -> Dict[str, Any]:
         },
         'relative': {
             'label': 'relative（2機の相対配置）',
-            'desc': '軌道力学なし。相対位置・姿勢で 2 機を配置（OOS 近接撮像向き）',
+            'desc': '相対状態または2機の絶対軌道から近接撮像（OOS）',
             'sections': RELATIVE_SECTIONS, 'defaults': RELATIVE_DEFAULTS,
+        },
+        'modelview': {
+            'label': 'モデル確認',
+            'desc': 'ブラウザ内でモデルを直接表示（レンダリング待ちなし）',
+            'defaults': {'display_mode': 'solid', 'keep_materials': True},
+            'sections': [{'title': '表示', 'fields': [
+                F('display_mode', '描画方法', 'select', options=['solid', 'overlay', 'wire']),
+                F('keep_materials', 'モデルの材質を使用', 'bool'),
+            ]}],
         },
         'rotation': {
             'label': 'rotation（単機タンブリング）',
@@ -488,12 +507,20 @@ def build_verb_schema() -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # ファイル一覧・プリセット読み込み
 # ---------------------------------------------------------------------------
-def list_files() -> Dict[str, List[str]]:
+def list_files() -> Dict[str, Any]:
     """ドロップダウン用のファイル候補一覧を返す（プロジェクト相対パス）。"""
     def rel(paths):
         return sorted(str(p.relative_to(ROOT)) for p in paths)
     models = [p for ext in ('*.obj', '*.ply', '*.glb', '*.gltf')
               for p in (ROOT / 'models').glob(ext)]
+    models += [p for ext in ('*.obj', '*.ply', '*.glb', '*.gltf')
+               for p in (ROOT / 'models/library').rglob(ext)]
+    from model_materials import library_metadata
+    model_labels = {}
+    for path in models:
+        meta = library_metadata(path)
+        if meta and meta.get('label'):
+            model_labels[str(path.relative_to(ROOT))] = meta['label']
     textures = [p for pat in ('*.jpg', '*.jpeg', '*.png')
                 for p in ROOT.glob(pat)]
     textures += [p for pat in ('*.jpg', '*.png', '*.exr')
@@ -501,11 +528,21 @@ def list_files() -> Dict[str, List[str]]:
                  for p in (ROOT / d).glob(pat) if (ROOT / d).exists()]
     csvs = list((ROOT / 'input').glob('*.csv'))
     envmaps = [p for d in ('assets',) for p in (ROOT / d).glob('*.exr')]
-    presets = list((ROOT / 'presets').glob('*.yaml'))
+    presets = preset_paths()
     return {
-        'model': rel(models), 'texture': rel(textures), 'csv': rel(csvs),
+        'model': rel(models), 'model_labels': model_labels, 'texture': rel(textures), 'csv': rel(csvs),
         'envmap': rel(envmaps), 'preset': rel(presets),
     }
+
+
+def preset_paths() -> List[Path]:
+    """プリセット YAML の探索先。`internal/presets/`（非公開・gitignore 対象）は
+    存在すれば併せて列挙する（配布版には無いので、その場合は `presets/` のみ）。"""
+    paths = list((ROOT / 'presets').glob('*.yaml'))
+    internal = ROOT / 'internal' / 'presets'
+    if internal.is_dir():
+        paths += list(internal.glob('*.yaml'))
+    return paths
 
 
 def flatten_simple_yaml(paths: List[Path]) -> Dict[str, Any]:
@@ -516,6 +553,33 @@ def flatten_simple_yaml(paths: List[Path]) -> Dict[str, Any]:
     薄い別名。
     """
     return load_flat_yaml_config(paths)
+
+
+GUI_META_PREFIX = '# mrender-gui: '
+
+
+def preset_ui_metadata() -> Dict[str, list]:
+    """GUI 保存プリセットの分類。YAML コメントなのでレンダラ設定に混入しない。"""
+    result = {}
+    for path in preset_paths():
+        try:
+            with path.open() as fh:
+                first = fh.readline()
+            if first.startswith(GUI_META_PREFIX):
+                meta = json.loads(first[len(GUI_META_PREFIX):])
+                if valid_preset_ui_metadata(meta):
+                    result[str(path.relative_to(ROOT))] = meta
+        except (OSError, UnicodeError, ValueError):
+            continue
+    return result
+
+
+def valid_preset_ui_metadata(meta) -> bool:
+    return (isinstance(meta, list) and len(meta) == 4
+            and all(isinstance(v, str) for v in meta)
+            and meta[0] in ('absolute', 'relative', 'ground', 'rotation')
+            and meta[3] in ('render', 'onboard', 'preview', 'lightcurve',
+                            'relative', 'groundobs', 'rotation'))
 
 
 def load_preset_flat(path: Path, verb: str) -> Dict[str, Any]:
@@ -858,7 +922,7 @@ LIVE: Dict[str, Any] = {
     'log_fh': None,
     'machine': 'local',  # 'local' か gui_hosts.json のエントリ名
 }
-_LIVE_LOCK = threading.Lock()
+_LIVE_LOCK = threading.RLock()
 LIVE_START_TIMEOUT_S = 25.0        # Mitsuba の import があるので長め
 LIVE_START_TIMEOUT_REMOTE_S = 60.0  # + ssh 接続とリモート Mitsuba import
 
@@ -893,70 +957,89 @@ def live_worker_alive() -> bool:
     return proc is not None and proc.poll() is None
 
 
-def ensure_live_worker() -> None:
-    """ワーカーを（必要なら）起動し、/health が返るまで待つ。
+def available_live_port(host: str, preferred: int) -> int:
+    """Use the preferred port if free, otherwise avoid an orphan worker/tunnel."""
+    for requested in (preferred, 0):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            try:
+                sock.bind((host, requested))
+                port = sock.getsockname()[1]
+                if port <= 65435:  # remote listener uses port + 100
+                    return port
+            except OSError:
+                if requested == 0:
+                    raise
+    raise RuntimeError('ライブワーカー用の空きポートを確保できません')
 
-    プロセスが死んでいたら次回呼び出しで自動的に再起動される。
-    """
+
+def ensure_live_worker() -> None:
+    """Serialize startup through verified readiness, including remote tunnels."""
     with _LIVE_LOCK:
-        if live_worker_alive():
+        if live_worker_alive() and LIVE.get('ready'):
             return
-        # 死んだプロセスの後始末
+        old = LIVE.get('proc')
+        if old is not None and old.poll() is None:
+            old.terminate()
+            old.wait(timeout=3)
         old_fh = LIVE.get('log_fh')
         if old_fh is not None:
-            try:
-                old_fh.close()
-            except OSError:
-                pass
+            old_fh.close()
         GUI_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         machine = LIVE.get('machine', 'local')
         remote = REMOTE_HOSTS.get(machine)
-        log_path = GUI_CONFIG_DIR / 'live_worker.log'
-        log_fh = log_path.open('a')
+        LIVE['port'] = available_live_port(LIVE['host'], LIVE['port'])
+        token = secrets.token_hex(16)
+        LIVE['ready'] = False
+        log_fh = (GUI_CONFIG_DIR / 'live_worker.log').open('a')
         log_fh.write(f'\n=== live_worker start {time.strftime("%Y-%m-%d %H:%M:%S")} '
                      f'port={LIVE["port"]} machine={machine} ===\n')
         log_fh.flush()
         if remote is None:
-            cmd = [sys.executable, str(ROOT / 'live_worker.py'),
-                   '--port', str(LIVE['port']), '--host', str(LIVE['host'])]
+            cmd = [sys.executable, str(ROOT / 'live_worker.py'), '--port', str(LIVE['port']),
+                   '--host', str(LIVE['host']), '--instance-token', token]
             stdin = None
         else:
-            # リモート常駐 + ssh -L トンネル。プロキシ先は従来どおり
-            # 127.0.0.1:port なので、以降の中継コードは一切変わらない。
-            # -tt で ssh 切断時にリモート worker へ HUP が届く。
-            # リモート側ポートは +100 ずらす: リモートホスト上で GUI を直接
-            # 動かしている場合（tools/dgx/start_gui_dgx.sh）の live_worker
-            # （GUI ポート+1）と衝突しないため。
             port = LIVE['port']
             rport = port + 100
-            rcmd = (f"cd {remote['dir']} && MRENDER_VARIANT={remote['variant']} "
-                    f"exec venv/bin/python live_worker.py "
-                    f"--port {rport} --host 127.0.0.1")
+            rcmd = (f"cd {shlex.quote(remote['dir'])} && MRENDER_VARIANT={shlex.quote(remote['variant'])} "
+                    f"exec venv/bin/python live_worker.py --port {rport} --host 127.0.0.1 "
+                    f"--instance-token {token}")
             cmd = ['ssh', '-tt', '-o', 'ExitOnForwardFailure=yes',
-                   '-L', f'{port}:127.0.0.1:{rport}', remote['ssh'], rcmd]
+                   '-L', f'{LIVE["host"]}:{port}:127.0.0.1:{rport}', remote['ssh'], rcmd]
             stdin = subprocess.DEVNULL
         proc = subprocess.Popen(cmd, cwd=str(ROOT), stdout=log_fh,
                                 stderr=subprocess.STDOUT, stdin=stdin)
-        LIVE['proc'] = proc
-        LIVE['log_fh'] = log_fh
-
-    deadline = time.time() + (LIVE_START_TIMEOUT_REMOTE_S if remote is not None
-                              else LIVE_START_TIMEOUT_S)
-    last_exc: Optional[Exception] = None
-    while time.time() < deadline:
-        proc = LIVE.get('proc')
-        if proc is not None and proc.poll() is not None:
-            raise RuntimeError(
-                f'live_worker が起動直後に終了しました (exit {proc.returncode})。'
-                f' ログ: runs/_gui_configs/live_worker.log')
+        LIVE['proc'], LIVE['log_fh'] = proc, log_fh
+        timeout = LIVE_START_TIMEOUT_REMOTE_S if remote is not None else LIVE_START_TIMEOUT_S
+        deadline = time.monotonic() + timeout
+        last_exc = None
         try:
-            status, _h, body = _live_get('/health', timeout=2.0)
-            if status == 200 and json.loads(body.decode('utf-8')).get('ok'):
-                return
-        except Exception as exc:  # noqa: BLE001 - 起動待ちの接続失敗は正常
-            last_exc = exc
-        time.sleep(0.25)
-    raise RuntimeError(f'live_worker の起動待ちがタイムアウトしました: {last_exc}')
+            while time.monotonic() < deadline:
+                if proc.poll() is not None:
+                    raise RuntimeError(f'live_worker が起動直後に終了しました (exit {proc.returncode})。'
+                                       'ログ: runs/_gui_configs/live_worker.log')
+                try:
+                    status, _h, body = _live_get('/health', timeout=2.0)
+                    health = json.loads(body.decode('utf-8'))
+                    if (status == 200 and health.get('ok')
+                            and health.get('instance_token') == token and proc.poll() is None):
+                        LIVE['ready'] = True
+                        return
+                except Exception as exc:
+                    last_exc = exc
+                time.sleep(.25)
+            raise RuntimeError(f'live_worker の起動待ちがタイムアウトしました: {last_exc}')
+        except Exception:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=3)
+            log_fh.close()
+            LIVE['proc'] = LIVE['log_fh'] = None
+            raise
 
 
 def stop_live_worker() -> bool:
@@ -988,6 +1071,7 @@ def stop_live_worker() -> bool:
                 pass
         LIVE['proc'] = None
         LIVE['log_fh'] = None
+        LIVE['ready'] = False
     return stopped
 
 
@@ -1273,6 +1357,7 @@ _CONTENT_TYPES = {
     '.jpeg': 'image/jpeg', '.mp4': 'video/mp4', '.json': 'application/json',
     '.yaml': 'text/plain; charset=utf-8', '.csv': 'text/plain; charset=utf-8',
     '.log': 'text/plain; charset=utf-8', '.exr': 'application/octet-stream',
+    '.wasm': 'application/wasm', '.webp': 'image/webp',
 }
 
 
@@ -1328,10 +1413,38 @@ class GuiHandler(BaseHTTPRequestHandler):
 
         if route in ('/', '/index.html'):
             self._send_file(GUI_DIR / 'index.html')
+        elif route.startswith('/gui/'):
+            path = (GUI_DIR / urllib.parse.unquote(route[len('/gui/'):])).resolve()
+            if not path.is_relative_to(GUI_DIR.resolve()):
+                self._send_error_json('forbidden', 403)
+            else:
+                self._send_file(path)
+        elif route.startswith('/model-assets/'):
+            path = (ROOT / 'models' / urllib.parse.unquote(route[len('/model-assets/'):])).resolve()
+            if not path.is_relative_to((ROOT / 'models').resolve()):
+                self._send_error_json('forbidden', 403)
+            else:
+                self._send_file(path)
+        elif route == '/api/model-info':
+            from model_materials import registered_materials
+            path = (ROOT / ((qs.get('path') or ['models/test_cube.obj'])[0] or 'models/test_cube.obj')).resolve()
+            if not path.is_relative_to((ROOT / 'models').resolve()) or not path.is_file():
+                self._send_error_json('モデルが見つかりません', 404)
+                return
+            if path.suffix.lower() not in ('.obj', '.ply', '.glb', '.gltf'):
+                self._send_error_json('未対応のモデル形式です')
+                return
+            materials = registered_materials(str(path))
+            self._send_json({
+                'url': '/model-assets/' + urllib.parse.quote(str(path.relative_to(ROOT / 'models'))),
+                'parts': materials[0] if materials else {},
+                'default_material': materials[1] if materials else {},
+            })
         elif route == '/api/state':
             self._send_json({
                 'verbs': build_verb_schema(),
                 'files': list_files(),
+                'preset_meta': preset_ui_metadata(),
             })
         elif route == '/api/preset':
             path = (qs.get('path') or [''])[0]
@@ -1495,6 +1608,9 @@ class GuiHandler(BaseHTTPRequestHandler):
                 return
             path = ROOT / 'presets' / f'{name}.yaml'
             with path.open('w') as fh:
+                meta = payload.get('gui_meta')
+                if valid_preset_ui_metadata(meta):
+                    fh.write(GUI_META_PREFIX + json.dumps(meta, ensure_ascii=False) + '\n')
                 yaml.safe_dump(config, fh, sort_keys=True, allow_unicode=True)
             self._send_json({'saved': str(path.relative_to(ROOT))})
         elif route == '/api/live/update':
@@ -1524,11 +1640,10 @@ class GuiHandler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self._send_error_json(str(exc))
                 return
-            if machine != LIVE.get('machine', 'local'):
-                # 旧マシンの worker を止めてから切替。次の /api/live/update の
-                # ensure_live_worker() が新マシンで遅延起動する
-                stop_live_worker()
-                LIVE['machine'] = machine
+            with _LIVE_LOCK:
+                if machine != LIVE.get('machine', 'local'):
+                    stop_live_worker()
+                    LIVE['machine'] = machine
             self._send_json({'ok': True, 'machine': machine})
         elif route == '/api/ai':
             if not AI['enabled']:
@@ -1746,6 +1861,15 @@ def main(argv: Optional[List[str]] = None) -> None:
     # （defaults は argparse から自動導出しているので、欠け = 設定ミス）
     _warn_schema_gaps()
 
+    # starfield.exr は Git 管理外（100 MB 超）。clone 直後は無いので、
+    # envmap ドロップダウンに最初から載るようここで生成しておく。
+    try:
+        from asset_bootstrap import ensure_starfield_envmap
+        ensure_starfield_envmap(ROOT / 'assets' / 'starfield.exr')
+    except Exception as exc:  # noqa: BLE001
+        print(f'  starfield.exr の生成に失敗しました（envmap 無しで続行）: {exc}',
+              file=sys.stderr)
+
     try:
         server = _ReuseAddrServer((args.host, args.port), GuiHandler)
     except OSError as exc:
@@ -1762,7 +1886,7 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     url = f'http://{args.host}:{args.port}/'
     print(f'mrender GUI: {url}  (Ctrl-C で終了)')
-    print(f'  ライブプレビュー ワーカー: ポート {LIVE["port"]}（初回 /api/live/update で起動）')
+    print(f'  ライブプレビュー ワーカー: 優先ポート {LIVE["port"]}（使用中なら空きポート、初回更新で起動）')
     if REMOTE_HOSTS:
         print(f'  リモート実行マシン: {", ".join(sorted(REMOTE_HOSTS))}（gui_hosts.json）')
     if AI['enabled']:
@@ -1773,6 +1897,11 @@ def main(argv: Optional[List[str]] = None) -> None:
     if not args.no_browser:
         import webbrowser
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
+    def on_terminate(_signum, _frame):
+        raise KeyboardInterrupt
+
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGTERM, on_terminate)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

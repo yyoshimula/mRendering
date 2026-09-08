@@ -22,6 +22,8 @@ import numpy as np
 from typing import Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 
+from asset_bootstrap import ensure_starfield_envmap
+
 
 @dataclass
 class SunParameters:
@@ -257,6 +259,8 @@ def create_starfield_envmap(
     """
     if hdri_path:
         # HDRI画像を使用（equirectangular EXR 等）
+        # 既定の assets/starfield.exr は Git 管理外なので、無ければここで生成する。
+        ensure_starfield_envmap(hdri_path)
         return {
             'type': 'envmap',
             'filename': hdri_path,

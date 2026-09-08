@@ -1,0 +1,351 @@
+{
+  "python": "3.11.13",
+  "mitsuba": "3.7.1",
+  "variant": "llvm_ad_rgb",
+  "checks": 32,
+  "passed": 32,
+  "failed": 0,
+  "results": [
+    {
+      "name": "nondegenerate_kepler_reference",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "cases": 100,
+        "max_position_error_km": 1.6018729594448952e-10,
+        "max_velocity_error_km_s": 2.126888588585648e-14
+      }
+    },
+    {
+      "name": "circular_argument_of_periapsis",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "position_error_km": 2.311913924865433e-12,
+        "actual_km": [
+          4.547473508864641e-13,
+          5353.89531099142,
+          4509.523810663839
+        ],
+        "reference_km": [
+          1.5543122344752192e-12,
+          5353.895310991419,
+          4509.523810663837
+        ]
+      }
+    },
+    {
+      "name": "equatorial_longitude_of_node",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "position_error_km": 1.672085664799873e-11,
+        "actual_km": [
+          -4863.514773850978,
+          7637.8017533053935,
+          0.0
+        ],
+        "reference_km": [
+          -4863.514773850962,
+          7637.8017533054,
+          0.0
+        ]
+      }
+    },
+    {
+      "name": "kepler_conservation",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "energy_relative_spread": 1.4973789174522809e-15,
+        "momentum_relative_spread": 4.672275386651624e-16
+      }
+    },
+    {
+      "name": "numerical_two_body_at_1000s",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "time_s": 1000.0,
+        "position_error_km": 1.369636891793327e-09
+      }
+    },
+    {
+      "name": "numerical_two_body_at_-10s",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "time_s": -10.0,
+        "position_error_km": 1.4779288903810084e-12
+      }
+    },
+    {
+      "name": "numerical_two_body_at_-100s",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "time_s": -100.0,
+        "position_error_km": 4.391889769192096e-09
+      }
+    },
+    {
+      "name": "j2_potential_gradient",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "acceleration_error_km_s2": 6.104550855686095e-13
+      }
+    },
+    {
+      "name": "drag_units_and_energy_loss",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "acceleration_error_km_s2": 4.357263631261492e-19
+      }
+    },
+    {
+      "name": "attitude_dcm_handedness_and_documented_axes",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "max_basis_or_pointing_error": 5.068954393793133e-16
+      }
+    },
+    {
+      "name": "constant_spin_reference",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "error_deg": 6.4005493061634025e-12,
+        "angular_momentum_vector_relative_error": 3.092448600145767e-16,
+        "energy_relative_error": 0.0
+      }
+    },
+    {
+      "name": "akatsuki_tumble",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "error_deg": 1.911515877915219e-10,
+        "angular_momentum_vector_relative_error": 3.6435837037777145e-15,
+        "energy_relative_error": 5.272291989087502e-15,
+        "audit_angle_tolerance_deg": 0.05
+      }
+    },
+    {
+      "name": "absolute_preset_tumble",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "error_deg": 9.013042061311838e-09,
+        "angular_momentum_vector_relative_error": 1.884716131471259e-14,
+        "energy_relative_error": 6.158037043254202e-15,
+        "audit_angle_tolerance_deg": 0.05
+      }
+    },
+    {
+      "name": "zero_spin_finite",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "q": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "csv_quaternion_sign_and_body_to_eci",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "matrix_error": 4.965068306494546e-16
+      }
+    },
+    {
+      "name": "csv_true_anomaly_wrap",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "midpoint_vs_chord_km": 0.5748781879745708
+      }
+    },
+    {
+      "name": "csv_without_quaternion_uses_pointing_mode",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "nadir_error_deg": 0.0
+      }
+    },
+    {
+      "name": "absolute_mode_csv_attitude",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "matrix_error": 0.0
+      }
+    },
+    {
+      "name": "relative_noncommuting_quaternion_composition",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "composition_matrix_error": 3.9350319887992495e-16
+      }
+    },
+    {
+      "name": "night_mask_matches_mitsuba_sphere_uv",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "sunward_mask": 0.0,
+        "antisunward_mask": 1.0
+      }
+    },
+    {
+      "name": "sun_tracking_procedural_panel_normal",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "panel_normal_sun_cosine": 1.0
+      }
+    },
+    {
+      "name": "surface_observer_overhead_visibility",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "false_occlusions": 0,
+        "cases": 12888,
+        "examples": []
+      }
+    },
+    {
+      "name": "earth_shadow_basic_geometry",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "sunward_antisunward_side_shadow": [
+          false,
+          true,
+          false
+        ]
+      }
+    },
+    {
+      "name": "earth_fixed_camera_target_rotates_with_earth",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "earth_rotation_deg": 90.0,
+        "ground_target_error_km": 0.0
+      }
+    },
+    {
+      "name": "all_named_bsdfs_load",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "loaded_materials": 9
+      }
+    },
+    {
+      "name": "mli_documented_mirror_diffuse_mix",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "measured_diffuse_fraction": 0.300000017220762,
+        "documented_diffuse_fraction": 0.3
+      }
+    },
+    {
+      "name": "groundobs_lambert_sphere_flux_and_inverse_square",
+      "scope": "active",
+      "status": "PASS",
+      "details": [
+        {
+          "range_km": 100.0,
+          "flux": 3.3356446966443977e-11,
+          "reference": 3.3333333333333335e-11,
+          "relative_error": 0.0006934089933192666
+        },
+        {
+          "range_km": 200.0,
+          "flux": 8.33911174254914e-12,
+          "reference": 8.333333333333334e-12,
+          "relative_error": 0.0006934091058967695
+        }
+      ]
+    },
+    {
+      "name": "groundobs_sensor_rebin_flux_conservation",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "flux_error": 0.0
+      }
+    },
+    {
+      "name": "persistent_vs_rebuilt_scene_smoke",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "mean_absolute_pixel_error": 1.4254813995862037e-09,
+        "rebuilds": 2,
+        "updates": 0
+      }
+    },
+    {
+      "name": "render_frame_volpath_and_png_smoke",
+      "scope": "active",
+      "status": "PASS",
+      "details": {
+        "shape": [
+          24,
+          24,
+          3
+        ],
+        "max_uint8": 255,
+        "atmosphere_enabled": true
+      }
+    },
+    {
+      "name": "analytic_atmosphere_beer_lambert",
+      "scope": "unused_helper",
+      "status": "PASS",
+      "details": {
+        "actual_transmittance": [
+          0.9778707606661771,
+          0.9522575304292734,
+          0.8906526766954
+        ],
+        "beer_lambert_reference": [
+          0.977870710631426,
+          0.9522574718971538,
+          0.8906525988346087
+        ]
+      }
+    },
+    {
+      "name": "analytic_earth_albedo_day_night",
+      "scope": "unused_helper",
+      "status": "PASS",
+      "details": {
+        "day_rgb": [
+          0.3514232660664695,
+          0.33385210276314603,
+          0.31628093945982255
+        ],
+        "night_rgb": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    }
+  ]
+}

@@ -31,11 +31,22 @@ runs/
 # tools/prepare_bmng.py で再生成できる高解像度地球タイル
 /assets/textures/earth_day_500m/
 
-# ローカルの実観測データ（SER/FITS・取得時の設定一式）
-/tools/groundobs_validation/20??-??-??/
+# 非公開データ（共同研究由来のモデル・実観測検証一式）
+# 研究室内は Dropbox / tools/dgx/sync_to_dgx.sh で配布する。internal/README.md 参照。
+/internal/
 
-# 観測検証の生成画像・中間データ（入力 CSV・モデル・設定は追跡する）
-/tools/groundobs_validation/*.png
-/tools/groundobs_validation/*.npy
-/tools/groundobs_validation/*.npz
-/tools/groundobs_validation/*_lc.json
+# GitHub の 100 MB 上限を超えるため追跡しない生成物
+# starfield.exr は初回起動時に tools/generate_starfield.py が自動生成する
+/assets/starfield.exr
+# cloud_opacity.exr は同名の PNG 版（models/cloud_textures/）で代替できる
+/models/cloud_textures/cloud_opacity.exr
+
+# ローカル設定（gui_hosts.example.json をコピーして作る）
+/gui_hosts.json
+
+# Blenderソースから再生成できるモデルライブラリ（tools/import_blender_models.py）
+/models/library/**/*.obj
+/models/library/**/textures/
+
+# 非公開モデル
+/models/library/_private_*/

@@ -256,7 +256,7 @@ python ground_observation.py --tle input/iss_sample.tle --frames 10
   収束する。r0 は `seeing_arcsec` から換算（FWHM = 0.98λ/r0）、カーネル総和 1
   正規化で測光値はガウス経路とビット一致。短露光（≲0.1 s）の分解像形状推定
   向け（例 `presets/groundobs_hubble_turbulence.yaml`）。検証は
-  `tools/groundobs_validation/turbulence_validation.py`（構造関数 ±10%・
+  `internal/groundobs_validation/turbulence_validation.py`（構造関数 ±10%・
   長露光 FWHM 誤差 4%・flux 保存を確認済み）
 - **軌道入力 3 系統**: `--tle`（SGP4、要 `pip install sgp4`。TEME≈ECI 近似、
   epoch 未指定時は TLE エポック採用）> `--orbit-csv` > ケプラー要素

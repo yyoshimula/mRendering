@@ -105,9 +105,12 @@ def build_relative_parser() -> argparse.ArgumentParser:
     parser.add_argument('--rel-quat', nargs=4, type=float, default=[0.0, 0.0, 0.0, 1.0],
                         help='deputy の chief に対する相対クォータニオン [qx qy qz qw]')
 
+    parser.add_argument('--relative-frame', choices=['hill', 'chief'], default='hill',
+                        help='相対位置の成分基準: hill=Hill/RTN、chief=従来のchief機体系')
+
     # chief 配置（通常は原点・恒等）
     parser.add_argument('--chief-position', nargs=3, type=float, default=[0.0, 0.0, 0.0],
-                        help='chief 位置 [x y z]')
+                        help='chief はHill原点に固定。[0 0 0] のみ指定可')
     parser.add_argument('--chief-quat', nargs=4, type=float, default=[0.0, 0.0, 0.0, 1.0],
                         help='chief クォータニオン [qx qy qz qw]')
 
@@ -164,6 +167,15 @@ def build_relative_parser() -> argparse.ArgumentParser:
     parser.add_argument('--camera-fov', type=float, default=45.0, help='視野角 [deg]')
     parser.add_argument('--camera-up', nargs=3, type=float, default=[0.0, 1.0, 0.0],
                         help='カメラの up ベクトル [x y z]')
+
+    parser.add_argument('--camera-mode', choices=['manual', 'chief_to_deputy', 'chief_fixed',
+                                                   'deputy_to_chief', 'deputy_fixed'], default='manual')
+    parser.add_argument('--camera-offset', nargs=3, type=float, default=[0., 0., 0.],
+                        help='カメラ搭載機の機体系での取付位置 [km]')
+    parser.add_argument('--camera-direction', nargs=3, type=float, default=[1., 0., 0.],
+                        help='fixed モードの機体系での視線方向')
+    parser.add_argument('--camera-body-up', nargs=3, type=float, default=[0., 0., 1.],
+                        help='カメラ搭載機の機体系での上方向')
 
     # フォトリアリスティック宇宙環境（on-orbit servicing 撮像などで使用）
     parser.add_argument('--hide-chief', action='store_true', default=False,

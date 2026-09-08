@@ -31,7 +31,7 @@ from scipy.integrate import solve_ivp
 
 import mitsuba as mi
 
-from yoshimulib.attitude.kinematics import q_prop_mat
+from yoshimulib.attitude.kinematics import q_kine
 
 # 単体 import されたときのために変換バリアントを保証する
 # （relative_motion / simple_rotation 経由なら既に設定済みなので no-op）。
@@ -65,10 +65,11 @@ def propagate_attitude(q: np.ndarray, w: np.ndarray, I_body: np.ndarray,
 
     動力学:
         I·ω̇ = -ω × (I·ω)              （オイラーの回転運動方程式、トルクフリー）
-        → ω̇ = I⁻¹ · (-ω × (I·ω))     を scipy solve_ivp (RK45) で積分
+        → ω̇ = I⁻¹ · (-ω × (I·ω))
     キネマティクス:
-        q(t+h) = Φ(ω, h) · q(t)        （離散伝播行列 yoshimulib.q_prop_mat）
-        |q| = 1 を毎ステップ再正規化（数値誤差の蓄積防止）
+        q̇ = yoshimulib.q_kine(SCALAR, q, ω)
+    両式を DOP853 で連立積分し、q と ω の両方を適応誤差制御する。
+    終点の |q| を再正規化する。
 
     Args:
         q: 現在のクォータニオン [qx,qy,qz,qw] (4,)  inertial → body の姿勢
@@ -76,39 +77,35 @@ def propagate_attitude(q: np.ndarray, w: np.ndarray, I_body: np.ndarray,
         I_body: 慣性テンソル [kg·m²] (3,3)         Body 座標系（主軸なら対角）
         I_inv : 逆慣性テンソル [1/(kg·m²)] (3,3)
         dt: 全体の時間刻み [s]（通常 1/fps）
-        substeps: クォータニオン伝播のサブステップ数（角速度の刻み）
+        substeps: 最大積分刻みを abs(dt)/substeps に制限（後方互換の引数）
 
     Returns:
         (q_next, w_next): 更新後の (クォータニオン, 角速度) ※Body 系
     """
-    h = dt / substeps
-    # solve_ivp に各サブステップ末尾の角速度を出力させる。
-    # 最終点は h*substeps ではなく dt そのものにする（浮動小数で
-    # (dt/substeps)*substeps が dt を 1 ULP 超えると solve_ivp の
-    # 「t_eval が t_span 外」エラーになる。dt=5553.6/180 等で実際に発現）
-    t_eval = [h * i for i in range(1, substeps)] + [dt]
+    q = np.asarray(q, dtype=float).reshape(4).copy()
+    w = np.asarray(w, dtype=float).reshape(3).copy()
+    if not np.isfinite(dt) or not np.isfinite(q).all() or not np.isfinite(w).all():
+        raise ValueError('姿勢・角速度・時間刻みは有限値である必要があります')
+    if substeps < 1 or int(substeps) != substeps:
+        raise ValueError('substeps は正の整数である必要があります')
+    norm = np.linalg.norm(q)
+    if norm < 1e-12:
+        raise ValueError('姿勢クォータニオンがゼロです')
+    q /= norm
+    if dt == 0:
+        return q, w
 
-    def euler_dynamics(t, w_vec):
-        # オイラー方程式: ω̇ = -I⁻¹ · (ω × I·ω)  （トルクフリー）
-        return I_inv @ (-np.cross(w_vec, I_body @ w_vec))
+    def dynamics(t, state):
+        q_vec, w_vec = state[:4], state[4:]
+        return np.concatenate((q_kine(SCALAR, q_vec, w_vec),
+                               I_inv @ (-np.cross(w_vec, I_body @ w_vec))))
 
-    sol = solve_ivp(euler_dynamics, [0, dt], w, method='RK45',
-                    t_eval=t_eval, rtol=1e-10, atol=1e-12)
-
-    # 各サブステップでクォータニオン伝播（yoshimulib の離散伝播行列）
-    # ω が一定な微小区間 h で q(t+h) = Φ(ω,h)·q(t) を解析的に適用する
-    for i in range(substeps):
-        w_i = sol.y[:, i]
-        # ω ≈ 0 のサブステップは回転なし。q_prop_mat は ψ = (ω/|ω|)·sin(|ω|h/2)
-        # で回転軸を正規化するため |ω| = 0 だと 0/0 → NaN が q に伝播する。
-        if np.linalg.norm(w_i) < 1e-12:
-            continue
-        Phi = q_prop_mat(SCALAR, h, w_i.reshape(1, 3))
-        q = Phi @ q
-        # 正規化（数値誤差の蓄積防止: 単位クォータニオン |q|=1 を維持）
-        q = q / np.linalg.norm(q)
-
-    return q, sol.y[:, -1]
+    sol = solve_ivp(dynamics, [0, dt], np.concatenate((q, w)), method='DOP853',
+                    t_eval=[dt], max_step=abs(dt)/substeps, rtol=1e-11, atol=1e-13)
+    if not sol.success:
+        raise RuntimeError(f'姿勢伝播に失敗: {sol.message}')
+    q_next, w_next = sol.y[:4, -1], sol.y[4:, -1]
+    return q_next / np.linalg.norm(q_next), w_next
 
 
 def propagate_trajectory(q0: np.ndarray, w0: np.ndarray, I_body: np.ndarray,
@@ -375,6 +372,12 @@ def load_model_with_parts(obj_path: str, part_bsdfs: dict, default_bsdf: dict,
             従来キー名）、指定時は `{prefix}_part_{name}`（relative は 2 機を
             同一シーンに置くのでキー衝突を避けるため必須）。
     """
+    from model_materials import library_metadata
+    imported = library_metadata(obj_path)
+    if imported:
+        part_bsdfs = {**imported.get('parts', {}), **(part_bsdfs or {})}
+        default_bsdf = default_bsdf or imported.get('default', {})
+
     fallback_bsdf = {
         'type': 'principled',
         'base_color': {'type': 'rgb', 'value': [0.7, 0.7, 0.7]},
