@@ -67,6 +67,43 @@ GUI は DGX 側の tmux セッション `mrender-gui` で動き続けるので�
 レンダリングは継続する。再接続は `connect_dgx.sh` を再実行するだけ。
 GUI 本体を止めるには `ssh dgx 'tmux kill-session -t mrender-gui'`。
 
+## 学生・メンバーが自分のアカウントで使う
+
+dgx は 1 人 1 アカウントで使う（共用アカウントは使わない）。GUI サーバーは
+人ごとに別プロセス・別ポートで動くので、同時に使っても互いの設定やジョブは
+混ざらない。共有されるのは GPU だけ（誰かの長いバッチ中は他の人のプレビューも遅くなる）。
+
+1. **管理者（吉村）が用意するもの**: dgx のアカウント（`ssh root@dgx adduser --disabled-password <name>`）と、
+   tailnet ACL の `ssh` ルール 1 行（`src` = 本人の Tailscale ログイン、`dst` = `tag:dgx`、
+   `users` = 本人のアカウント名）。**ルールがあれば SSH 公開鍵の登録は不要**（Tailscale SSH が認証する）。
+2. **本人**: tailnet に参加した端末から `ssh <name>@<DGX の Tailscale IP>` で入れることを確認。
+3. **本人（dgx 上、初回のみ）**:
+   ```bash
+   git clone https://github.com/yyoshimula/mRendering.git && cd mRendering
+   tools/dgx/setup_dgx.sh          # venv 作成 + Mitsuba (cuda_ad_rgb) 確認
+   ```
+4. **起動（dgx 上）**: 割り当てられたポートで
+   ```bash
+   GUI_PORT=<自分のポート> tools/dgx/start_gui_dgx.sh
+   ```
+   tmux 内で動かせば端末を閉じても続く（`tmux new -s mrender-gui` してから上を実行）。
+5. **手元の Mac から開く**: このリポジトリを Mac にも clone してあれば
+   ```bash
+   DGX_HOST=<name>@<DGX の Tailscale IP> GUI_PORT=<自分のポート> tools/dgx/connect_dgx.sh
+   ```
+   （起動確認 → トンネル → ブラウザまで自動。無ければ `ssh -L <port>:127.0.0.1:<port> <name>@<DGX の Tailscale IP>` を張って `http://127.0.0.1:<port>` を開く）
+
+### ポート割り当て
+
+GUI ポートに加えて +1（ライブワーカー）と +101（方式①のリモートワーカー）を使うので、10 刻みで割り当てる。
+
+| アカウント | GUI ポート |
+|---|---|
+| yyoshimula | 8600 |
+| <name> | 8610 |
+
+`internal/`（非公開データ）は GitHub に無い。必要な人には Dropbox から別途渡す。
+
 ## Mitsuba バリアント（GPU / CPU）
 
 バリアントは環境変数 `MRENDER_VARIANT`（カンマ区切り、先勝ち）で選ぶ
