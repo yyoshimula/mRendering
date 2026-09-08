@@ -33,6 +33,10 @@ Mitsuba メモ:
     - 'homogeneous' medium は participating media (体積散乱) に使う
 """
 
+# 戻り値注釈 `-> mi.ScalarTransform4f` を import 時に評価させない（バリアント未設定の
+# 段階で satellite_orbit → scene_builder → ここが import される。2026-09-08 回帰の修正）。
+from __future__ import annotations
+
 import os
 import numpy as np
 from pathlib import Path

@@ -38,6 +38,7 @@ runs/
 # GitHub の 100 MB 上限を超えるため追跡しない生成物
 # starfield.exr は初回起動時に tools/generate_starfield.py が自動生成する
 /assets/starfield.exr
+/assets/starfield.exr.json
 # cloud_opacity.exr は同名の PNG 版（models/cloud_textures/）で代替できる
 /models/cloud_textures/cloud_opacity.exr
 

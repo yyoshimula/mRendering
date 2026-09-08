@@ -183,11 +183,15 @@ class AnimationConfig:
         duration_sec:  シミュレーション時間 [s]、None なら frames から逆算
         fps:           出力動画の FPS、None なら frames/duration から逆算
         start_time:    シミュレーション開始時刻 [s] (epoch オフセット)
+        epoch_jd:      t=0 に対応する UTC のユリウス日。None なら簡易モデル
+                       （t=0 で太陽=+x・グリニッジ=+x という暗黙のエポック ≈ 春分の
+                       GMST=0 時刻）。指定時は太陽=VSOP87、自転角=GMST の実時刻
     """
     orbit_speed: float
     duration_sec: Optional[float]
     fps: Optional[float]
     start_time: float = 0.0
+    epoch_jd: Optional[float] = None
 
 
 @dataclass

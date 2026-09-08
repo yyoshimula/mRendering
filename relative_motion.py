@@ -994,8 +994,12 @@ def build_environment(args: argparse.Namespace, chief_pos: np.ndarray
     if starfield:
         # 既定の assets/starfield.exr は Git 管理外なので、無ければここで生成する。
         ensure_starfield_envmap(starfield)
+        from optical_lighting import starfield_to_world_matrix
+        # 星図規約（u=1−RA/2π, 極=y）→ シーン(+z=北天極, +x=RA 0) の固定回転。
+        # absolute モードでは rotate_env_dict が A_i2rtn を左から合成する。
         env_dict = {'type': 'envmap', 'filename': str(starfield),
-                    'scale': float(env_brightness if env_brightness is not None else 1.0)}
+                    'scale': float(env_brightness if env_brightness is not None else 1.0),
+                    'to_world': mi.ScalarTransform4f(starfield_to_world_matrix().tolist())}
     elif env_brightness is not None:
         b = float(env_brightness)
         env_dict = {'type': 'constant', 'radiance': {'type': 'rgb', 'value': [b, b, b * 1.2]}}
@@ -1040,7 +1044,8 @@ class AbsoluteOrbitContext:
       - 食: yoshimulib shadow() の照射率 ν ∈ [0,1] を太陽照度に乗算
       - 地球姿勢: ECEF→シーン = A_i2rtn · Rz(GMST)。直下点が地上軌跡どおり動き、
         create_earth_backdrop(orientation=...) が毎フレーム可視域をクロップする
-      - 星空 envmap: to_world = A_i2rtn（恒星は ECI 固定 = シーンの回転に伴い流れる）
+      - 星空 envmap: to_world = A_i2rtn · R_starfield（恒星は ECI 固定 = シーンの回転に伴い流れる）
+      - 座標系: 太陽（VSOP87）は平均分点 of date（GMST と同じ系）に歳差補正済み
     """
 
     def __init__(self, args: argparse.Namespace) -> None:
@@ -1196,18 +1201,20 @@ class AbsoluteOrbitContext:
     @staticmethod
     def rotate_env_dict(env_dict: Optional[dict], a_i2rtn: np.ndarray
                         ) -> Optional[dict]:
-        """starfield envmap を ECI 固定にする（to_world = A_i2rtn の回転）。
+        """starfield envmap を ECI 固定にする（to_world = A_i2rtn · R_starfield）。
 
         シーン(RTN)は慣性空間内で回転するので、envmap をシーンに固定すると
         恒星が chief と一緒に回る非物理になる。to_world に ECI→シーンの回転を
-        与えれば恒星方向は慣性固定になる。constant 環境光はそのまま返す。
+        与えれば恒星方向は慣性固定になる。R_starfield は星図画像規約
+        （optical_lighting.STARFIELD_LOCAL_TO_ECI）→ ECI の固定回転。
+        constant 環境光はそのまま返す。
         """
         if not env_dict or env_dict.get('type') != 'envmap':
             return env_dict
-        rot4 = np.eye(4)
-        rot4[:3, :3] = np.asarray(a_i2rtn, dtype=float)
+        from optical_lighting import starfield_to_world_matrix
         out = dict(env_dict)
-        out['to_world'] = mi.ScalarTransform4f(rot4.tolist())
+        out['to_world'] = mi.ScalarTransform4f(
+            starfield_to_world_matrix(np.asarray(a_i2rtn, dtype=float)).tolist())
         return out
 
 

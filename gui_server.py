@@ -97,6 +97,8 @@ COMMON_SECTIONS: List[Dict[str, Any]] = [
         F('duration_sec', 'シミュレーション時間 [s]', 'float', optional=True,
           help='未指定時は orbit_speed 由来の時間軸'),
         F('start_time', '開始時刻 [s]', 'float'),
+        F('epoch_utc', 'エポック UTC (ISO 8601)', 'str', optional=True,
+          help='t=0 の実時刻。指定すると太陽=VSOP87・自転角=GMST（平均分点 of date）。空欄=簡易モデル（t=0 で太陽=+x・グリニッジ=+x）'),
         F('start_frame', '開始フレーム', 'int', help='preview ではこのフレームだけ描画'),
         F('make_video', '完了後に mp4 作成', 'bool'),
         F('video_fps', '動画再生 fps', 'float', optional=True,
@@ -159,7 +161,8 @@ COMMON_SECTIONS: List[Dict[str, Any]] = [
         F('advanced_optics', '高度な光学（推奨）', 'bool',
           help='黒体放射太陽色・星空等の物理ベースライティング'),
         F('sun_temperature', '太陽色温度 [K]', 'float'),
-        F('sun_angle', '太陽方位 [deg]', 'float', optional=True),
+        F('sun_angle', '太陽黄経 [deg]', 'float', optional=True,
+          help='黄道上の太陽位置（0=春分点方向 +x、90=夏至）。空欄=自動（epoch_utc 指定なら VSOP87）'),
         F('sun_rotate', '太陽を回す', 'bool'),
         F('starfield_brightness', '星空の明るさ', 'float', step=0.001),
         F('hdri_path', 'HDRI 環境マップ', 'file', kind='envmap', optional=True),
@@ -170,7 +173,8 @@ COMMON_SECTIONS: List[Dict[str, Any]] = [
 ]
 
 LIGHTCURVE_EXTRA = {'title': 'ライトカーブ / 観測者', 'fields': [
-    F('light_curve_fov', '観測 FOV [deg]', 'float'),
+    F('light_curve_fov', '観測 FOV [deg]', 'float', optional=True,
+      help='空欄=物体の見かけサイズから自動（クリップ防止）'),
     F('light_curve_samples', '観測サンプル数', 'int'),
     F('observer_lat', '観測者緯度 [deg]', 'float'),
     F('observer_lon', '観測者経度 [deg]', 'float'),

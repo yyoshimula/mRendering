@@ -28,6 +28,7 @@ import numpy as np
 import yaml
 
 from orbit_mechanics import (
+    parse_epoch_jd,
     OrbitalElements,
     EARTH_RADIUS_KM,
     NumericalPropagator,
@@ -232,6 +233,7 @@ _ARG_DEFAULTS: Dict[str, Any] = {
     'duration_sec': None,
     'fps': None,
     'start_time': 0.0,
+    'epoch_utc': None,        # ISO 8601 UTC。指定すると太陽方向=VSOP87、自転角=GMST（実時刻）
     'output_dir': 'output',
     'width': 1920,
     'height': 1080,
@@ -302,7 +304,7 @@ _ARG_DEFAULTS: Dict[str, Any] = {
     'video_name': 'output.mp4',
     # observer / light curve (光度曲線解析)
     'light_curve': False,
-    'light_curve_fov': 2.0,
+    'light_curve_fov': None,   # [deg]。None で物体の見かけサイズから自動（クリップ防止）
     'light_curve_samples': 64,
     'observer_lat': 35.0,
     'observer_lon': 135.0,
@@ -554,6 +556,8 @@ def build_render_config(args: argparse.Namespace, earth_day_texture: Optional[st
             duration_sec=args.duration_sec,
             fps=args.fps,
             start_time=float(getattr(args, 'start_time', 0.0) or 0.0),
+            epoch_jd=(parse_epoch_jd(args.epoch_utc)
+                      if getattr(args, 'epoch_utc', None) else None),
         ),
     )
 

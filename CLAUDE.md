@@ -126,6 +126,30 @@ python mrender.py lightcurve --config presets/iss.yaml
 python mrender.py onboard --config presets/relative_view.yaml
 ```
 
+**Mitsuba 型の注釈は import 時に評価させない**: `-> mi.ScalarTransform4f` のような
+戻り値注釈はバリアント未設定の段階で import されると AttributeError になる
+（satellite_orbit → scene_builder → scene_earth の連鎖で render 系 4 verb が CLI/GUI から
+起動不能になった 2026-09-08 の回帰）。Mitsuba を使うモジュールには
+`from __future__ import annotations` を置く。CLI 起動経路は `tests/test_cli_import_order.py`
+がサブプロセスで検証する（テスト本体は scene_common を先に import するので検出できない）。
+
+**座標系と時刻（全 verb 共通）**: 「ECI」は **平均赤道・平均分点 of date**。
+地球自転は GMST（IAU 1982）、TLE/SGP4 の TEME もこの系に近い。太陽（VSOP87）と
+恒星（Hipparcos ICRS≈J2000）は `orbit_mechanics.precession_j2000_to_date()` で
+of-date へ歳差補正する（2026 年で J2000 との差 0.37° = 22′、狭視野の星野では
+無視できない）。yoshimulib `sun_lon_lat_r` は docstring に反して J2000 黄経を返す
+（同ライブラリの `sun()` はそれを前提に整合）ので、of-date が必要なら
+`orbit_mechanics.sun_position_eci_km(jd)` を使うこと。
+render/preview/lightcurve/onboard も `epoch_utc`（ISO 8601、`rendering:` 等に置く
+フラットキー）を指定すると太陽 = VSOP87、自転角 = GMST の実時刻になる。未指定時は
+従来の簡易モデル（t=0 で太陽 = +x = 春分点、グリニッジ = +x、太陽は 365.25 日の
+円運動）。`sun_angle` は太陽の **黄経** [deg]（黄緯 0、黄道傾斜 23.44°）。
+lightcurve の観測者はフレームごとに同じ自転角で回し、`light_curve_fov` は
+null（既定）で物体の見かけサイズから自動決定する（既定 `satellite_scale` 0.002 は
+地球半径単位で数十 km 級なので固定 2° では全距離でクリップしていた）。
+黒体色 `blackbody_to_rgb` は Planck × CIE 1931 → **線形** sRGB（最大成分 1、
+5778 K ≈ (1, 0.88, 0.82)）。
+
 ### 実行（rotation: 単機タンブリング、軌道なし）
 
 `rotation` verb (`simple_rotation.py`) は専用の CLI フラグを持つ（`--frames`, `--samples`, `--Ix`, `--wx`, `--model-path`, `--model-scale`, `--camera-origin` など）。YAML と CLI を混在可。
@@ -202,7 +226,7 @@ python mrender.py relative --config presets/relative_ykwn_absolute.yaml
 `--chief-orbit-csv/--deputy-orbit-csv` = CsvEphemeris スキーマ [rad]）を伝播し、
 chief の RTN(LVLH) に落として相対状態を作る（シーン = chief 中心 RTN [km]、
 x=R, y=T, z=N。camera_* もこの回転系で指定）。環境は `--epoch-utc` 基準の実時刻で
-毎フレーム更新: 太陽方向 = VSOP87（groundobs の `sun_position_eci_km` を共用）、
+毎フレーム更新: 太陽方向 = VSOP87（`orbit_mechanics.sun_position_eci_km`、平均分点 of date）、
 食 = yoshimulib `shadow()` の ν を照度に乗算、地球姿勢 = GMST + フル 3 軸
 `orientation`（`create_earth_backdrop(orientation=...)`。直下点が地上軌跡どおりに
 動き、可視域クロップを毎フレーム再計算 = フレームあたり数百 ms のタイル
@@ -273,6 +297,9 @@ python ground_observation.py --tle input/iss_sample.tle --frames 10
 - `--start-overhead` で Ω(RAAN)・M₀ を自動調整し t=0 に天頂パスを作れる（デモ用）
 - センサノイズ（`--sensor-noise`）: 口径・QE・露光から光電子数 → ショット +
   読み出しノイズ + 夜空背景 [mag/arcsec²]（SatCap の CCD 式を物理単位で移植）。
+  光電子換算は **V バンド**（V=0 で 8.84e9 photons/s/m²、Bessell）: 等級→照度の
+  ボロメトリック換算値 E を 550 nm 光子で割ると全波長 1361 W/m² 分を数えて ≈8.6 倍
+  過大になるので、`photons_per_wm2()` で帯域内（太陽 ≈159 W/m²）に換算する。
   表示 PNG は背景中央値を引き 8σ フロアでストレッチ（実データは *_linear.npy）。
   ノイズ OFF でもモノクロ検出器を模すなら `--monochrome`（Rec.709 輝度、
   *_linear.npy も 2D になる。sensor-noise ON は常にモノクロなので不要）
@@ -320,6 +347,14 @@ v=acos(z)/π（実測確定）。クロップはプロセス内キャッシュ�
 earth_texture へ自動フォールバック。要出典表記: NASA GIBS。/
 `--sun-direction --sun-irradiance --sun-temperature`（黒体放射色）/
 `--starfield <exr>` + `--env-brightness` / `--camera-up` / `--max-depth`。
+**星空 envmap の規約**: `assets/starfield.exr` は「内側から見た星図」
+（u = 1 − RA/2π、v = 1/2 − Dec/π）。Mitsuba envmap のローカル座標は
+u = atan2(x, −z)/2π・極 = ±y（左手回り）なので、RA を u に直接写すと鏡像
+（行列式 −1）になり回転では直せない。consumers（scene_builder / relative_motion）は
+`optical_lighting.STARFIELD_LOCAL_TO_ECI`（local +y→ECI +z、local −z→ECI +x）を
+to_world に合成する（absolute では A_i2rtn を左から掛ける）。2026-09-08 に規約を
+修正したので、それ以前に生成した EXR は `tools/generate_starfield.py --width 8192
+--milky-way --output assets/starfield.exr` で再生成が必要。
 
 **近接シーンは relative verb を使うこと**: render/onboard パス（地球半径=1.0 の
 シーン単位）では数十 m の分離距離が float32 精度で崩れる。relative は km 単位

@@ -5,10 +5,14 @@ HYG v4.1 (Hipparcos/Yale/Gliese 統合カタログ, ~119,000 星) の
 実際の位置・等級・色指数を使い、物理的に正確な全天マップを出力する。
 
 扱う物理:
-  - equirectangular 投影（経緯度マップ、Plate Carrée）:
-        x = (RA / 2π) * width                ; 赤経 [0, 2π) → 画像横方向（左→右）
+  - equirectangular 投影（経緯度マップ、Plate Carrée、**内側から見た星図の向き**）:
+        x = ((1 - RA / 2π) mod 1) * width   ; 赤経 [0, 2π) → 画像横方向（右→左、RA=0 が左端）
         y = (1/2 - Dec / π) * height        ; 赤緯 [+π/2, -π/2] → 画像縦方向（上→下）
-    Mitsuba の `envmap` プラグインがこの規約を期待する。
+    Mitsuba `envmap` のローカル座標は u = atan2(x, −z)/2π, v = acos(y)/π（極 = ±y、
+    u は +y まわり左手回り）なので、RA を u に直接写すと鏡像（行列式 −1）になり
+    回転では補正できない。上の規約で描き、optical_lighting.STARFIELD_LOCAL_TO_ECI
+    （local +y→ECI +z, local −z→ECI +x）を to_world に与えると星が ECI の正しい
+    方向に出る（2026-09-08 修正。旧 EXR は再生成が必要）。
   - HYG カタログの ra 列は時角（hours, 0..24）で格納されているため、
     1 h = 15° = π/12 rad で変換する。
   - 視等級 → 線形強度: I = I0 * 10^(-0.4 m)（Pogson の式）。
@@ -27,15 +31,20 @@ Usage:
 """
 
 import argparse
+import sys
 import csv
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 
 # Mitsuba は EXR 書き出しにのみ使用
 import mitsuba as mi
 mi.set_variant('scalar_rgb')
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo ルート（optical_lighting）
+from optical_lighting import blackbody_to_rgb  # noqa: E402
+from asset_bootstrap import write_starfield_sidecar, STARFIELD_CONVENTION  # noqa: E402
 
 CATALOG_PATH = Path(__file__).parent / 'hyg_catalog.csv'
 
@@ -59,31 +68,12 @@ def bv_to_temperature(bv: float) -> float:
 
 
 def blackbody_rgb(temperature: float) -> np.ndarray:
-    """黒体放射色温度 [K] から線形 RGB (0-1) を返す。
+    """黒体放射色温度 [K] → 線形 RGB (0-1, 最大成分 1)。
 
-    Planck 則 B_λ(T) を可視域で CIE 等色関数と畳み込んだ結果を、
-    Tanner Helland の対数・冪近似で再現する。EXR は線形空間が前提なので、
-    optical_lighting.blackbody_to_rgb（sRGB 想定）と異なり γ 補正を含まない。
+    optical_lighting.blackbody_to_rgb（Planck × CIE 1931 → 線形 sRGB）を共用する。
+    旧実装は Tanner Helland 式（sRGB 表示値のフィット）を「線形」と称していた。
     """
-    t = temperature / 100.0
-    # Red
-    if t <= 66:
-        r = 1.0
-    else:
-        r = 1.292936 * (t - 60) ** -0.1332047592
-    # Green
-    if t <= 66:
-        g = 0.39008158 * np.log(t) - 0.63184144
-    else:
-        g = 1.129891 * (t - 60) ** -0.0755148492
-    # Blue
-    if t >= 66:
-        b = 1.0
-    elif t <= 19:
-        b = 0.0
-    else:
-        b = 0.54320679 * np.log(t - 10) - 1.19625409
-    return np.clip([r, g, b], 0.0, 1.0)
+    return np.asarray(blackbody_to_rgb(float(temperature)), dtype=float)
 
 
 # ---------------------------------------------------------------------------
@@ -173,10 +163,10 @@ def make_milky_way_density(height: int, width: int) -> np.ndarray:
     銀河中心 (l ≈ 0°, いて座方向) を中心とした追加のガウシアンで明るさを
     ブーストし、見た目の偏在を再現。
     """
-    # equirectangular グリッドを構築
-    # dec は上端 +π/2 → 下端 -π/2、ra は左 0 → 右 2π
-    dec = np.linspace(np.pi / 2, -np.pi / 2, height)
-    ra = np.linspace(0, 2 * np.pi, width)
+    # equirectangular グリッドを構築（星の px/py と同じ規約: pixel_of_ra_dec）
+    # dec は上端 +π/2 → 下端 -π/2、ra は左 0 → 右へ **減少**（内側から見た星図）
+    dec = (0.5 - (np.arange(height) + 0.5) / height) * np.pi
+    ra = (1.0 - (np.arange(width) + 0.5) / width) * 2 * np.pi
     ra_grid, dec_grid = np.meshgrid(ra, dec)
 
     # 赤道座標 → 銀河緯度の近似変換
@@ -210,6 +200,22 @@ def make_milky_way_density(height: int, width: int) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # メイン生成
 # ---------------------------------------------------------------------------
+
+def pixel_of_ra_dec(ra_rad: np.ndarray, dec_rad: np.ndarray,
+                    width: int, height: int) -> Tuple[np.ndarray, np.ndarray]:
+    """赤経・赤緯 [rad] → 画素 (px, py)。星図規約: u = (1 − RA/2π) mod 1, v = 1/2 − Dec/π。
+
+    Mitsuba envmap のローカル座標で u = atan2(x, −z)/2π なので、この画像を
+    STARFIELD_LOCAL_TO_ECI（local −z = RA 0 = ECI +x, local +y = ECI +z）で回すと
+    方向 (RA, Dec) がこの画素を指す。
+    """
+    ra = np.asarray(ra_rad, dtype=float)
+    dec = np.asarray(dec_rad, dtype=float)
+    u = (1.0 - ra / (2 * np.pi)) % 1.0
+    px = np.floor(u * width).astype(int) % width
+    py = np.clip(np.floor((0.5 - dec / np.pi) * height).astype(int), 0, height - 1)
+    return px, py
+
 
 def magnitude_to_intensity(mag: np.ndarray, mag_zero_intensity: float = 0.8) -> np.ndarray:
     """見かけの等級を相対輝度に変換する（ベクトル対応）。
@@ -250,12 +256,8 @@ def generate_starfield(
         mw_color = blackbody_rgb(4500)
         image += mw_density[:, :, None] * mw_color[None, None, :] * milky_way_brightness
 
-    # --- equirectangular 投影 ---
-    # RA: 0→2π → 画像左→右, Dec: +90°→-90° → 画像上→下
-    # px = (RA / 2π) * W, py = (1/2 - Dec/π) * H
-    px = ((ra_rad / (2 * np.pi)) * width).astype(int) % width
-    py = ((0.5 - dec_rad / np.pi) * height).astype(int)
-    py = np.clip(py, 0, height - 1)
+    # --- equirectangular 投影（星図規約、pixel_of_ra_dec 参照）---
+    px, py = pixel_of_ra_dec(ra_rad, dec_rad, width, height)
 
     intensities = magnitude_to_intensity(mag)
 
@@ -307,6 +309,9 @@ def save_exr(image: np.ndarray, path: str) -> None:
     bitmap = mi.Bitmap(image, mi.Bitmap.PixelFormat.RGB)
     bitmap.write(path)
     print(f"保存: {path}  ({w}x{h}, {image.nbytes / 1024 / 1024:.1f} MB)")
+    # 投影規約のサイドカー（asset_bootstrap が起動時に照合し、旧規約 EXR を作り直す）
+    write_starfield_sidecar(Path(path), width=int(image.shape[1]), height=int(image.shape[0]),
+                            generator='tools/generate_starfield.py')
 
 
 def main():

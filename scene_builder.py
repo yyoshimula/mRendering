@@ -31,6 +31,7 @@ from scene_earth import (
     create_earth, create_clouds, create_night_lights, create_atmosphere,
 )
 from optical_lighting import (
+    starfield_to_world_matrix,
     create_space_lighting_scene, SunParameters,
 )
 
@@ -245,6 +246,11 @@ def create_scene(camera_position=None, camera_target=None, camera_up=None,
         for light_name, light_dict in lighting.items():
             if light_name == 'starfield':
                 if include_envmap:
+                    if light_dict.get('type') == 'envmap':
+                        # 星図規約 → ECI（シーン = ECI をスケールしたもの）の固定回転
+                        light_dict = dict(light_dict)
+                        light_dict['to_world'] = mi.ScalarTransform4f(
+                            starfield_to_world_matrix().tolist())
                     scene_dict['envmap'] = light_dict
             else:
                 scene_dict[light_name] = light_dict
@@ -267,6 +273,7 @@ def create_scene(camera_position=None, camera_target=None, camera_up=None,
                     'type': 'envmap',
                     'filename': hdri_path,
                     'scale': starfield_brightness,
+                    'to_world': mi.ScalarTransform4f(starfield_to_world_matrix().tolist()),
                 }
             else:
                 # 暗い一様な背景 (深宇宙の代用)。色比は青寄りのまま、

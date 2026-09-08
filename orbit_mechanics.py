@@ -492,6 +492,105 @@ def compute_sun_position(time: float) -> np.ndarray:
     return sun_direction
 
 
+# ---------------------------------------------------------------------------
+# 絶対時刻・天文暦（Mitsuba 非依存。render 系 / relative absolute / groundobs が共用）
+#
+# 座標系の取り決め: 本プロジェクトの「ECI」は **平均赤道・平均分点 of date** とする。
+#   - 地球自転は GMST（of-date 分点基準）で回す
+#   - TLE/SGP4 の TEME も of-date 系に近い
+#   - 太陽（VSOP87）と恒星（Hipparcos, ICRS≈J2000）は J2000 → of-date へ歳差補正して揃える
+# 2026 年で J2000 との差は約 0.37°（一般歳差 50.3″/yr）。章動・光行差（≲20″）は無視。
+# ---------------------------------------------------------------------------
+J2000_JD = 2451545.0
+
+
+def parse_epoch_jd(epoch_utc: str) -> float:
+    """ISO 8601 UTC 文字列 → ユリウス日。naive は UTC とみなす（'Z' / '+09:00' 可）。"""
+    from datetime import datetime, timezone
+    from yoshimulib.conversion.calendar import gc2jd
+    text = str(epoch_utc).strip().replace('Z', '+00:00')
+    dt = datetime.fromisoformat(text)
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    sec = dt.second + dt.microsecond * 1e-6
+    return float(gc2jd(dt.year, dt.month, dt.day, dt.hour, dt.minute, sec))
+
+
+def gmst_rad(jd: float) -> float:
+    """グリニッジ平均恒星時 [rad]（IAU 1982、yoshimulib.orbit.sidereal.gmst）。UT1≈UTC。"""
+    from yoshimulib.orbit.sidereal import gmst
+    return float(np.atleast_1d(gmst(np.array([float(jd)])))[0])
+
+
+def precession_j2000_to_date(jd: float) -> np.ndarray:
+    """J2000 平均赤道座標 → 指定 JD の平均赤道座標（of date）へ回す 3×3 行列 P。
+
+    r_date = P @ r_J2000。IAU 1976 歳差（yoshimulib precession_dcm、Montenbruck & Gill
+    p.176）。VSOP87 直接計算の of-date 太陽と 0.0″ で一致することを確認済み。
+    """
+    from yoshimulib.orbit.constants import CONST
+    from yoshimulib.orbit.precession import precession_dcm
+    P = np.asarray(precession_dcm(J2000_JD, float(jd), CONST), dtype=float).reshape(3, 3)
+    return P
+
+
+def mean_obliquity_rad(jd: float) -> float:
+    """平均黄道傾斜 ε [rad]（IAU 1980、Meeus 22.2）。"""
+    T = (float(jd) - J2000_JD) / 36525.0
+    arcsec = 84381.448 - 46.8150 * T - 0.00059 * T ** 2 + 0.001813 * T ** 3
+    return np.radians(arcsec / 3600.0)
+
+
+_VSOP_CACHE: Optional[tuple] = None
+
+
+def sun_position_eci_km(jd: float, frame: str = 'date') -> np.ndarray:
+    """VSOP87 による太陽の地心位置 [km]。
+
+    Args:
+        jd:    ユリウス日（UTC。TT との差 ~69 s は太陽方向 2.8″ で無視）
+        frame: 'date' = 平均赤道・平均分点 of date（既定。GMST/TEME と同じ系）
+               'j2000' = J2000 平均赤道
+
+    Notes:
+        yoshimulib `sun_lon_lat_r` は docstring に「equinox of date」とあるが、実際は
+        of-date の VSOP87 係数に precession(J2000→jd) を掛けて **J2000 黄経** を返す
+        （同ライブラリの `sun()` はそれを J2000 として扱っており内部整合している）。
+        ここでは J2000 黄道→J2000 赤道（EPS0）→ 歳差行列で of-date に回す。
+        `ephemeris.sun()` 本体は `au2km(sun_au, const)` の引数バグで TypeError になるため未使用。
+    """
+    global _VSOP_CACHE
+    if _VSOP_CACHE is None:
+        from yoshimulib.orbit.constants import OrbitalConstants, vsop_const
+        from yoshimulib.sun_moon.ephemeris import sun_lon_lat_r
+        _VSOP_CACHE = (OrbitalConstants(), vsop_const(), sun_lon_lat_r)
+    const, earth_vsop, _sun_lon_lat_r = _VSOP_CACHE
+    lon, lat, r_au = _sun_lon_lat_r(np.array([float(jd)]), const, earth_vsop)
+    lon = float(np.atleast_1d(lon)[0])
+    lat = float(np.atleast_1d(lat)[0])
+    r_km = float(np.atleast_1d(r_au)[0]) * const.AU
+    x_ecl = r_km * np.cos(lat) * np.cos(lon)
+    y_ecl = r_km * np.cos(lat) * np.sin(lon)
+    z_ecl = r_km * np.sin(lat)
+    eps = float(const.EPS0)  # J2000 平均黄道傾斜（黄経が J2000 基準なのでこれが正しい）
+    r_j2000 = np.array([
+        x_ecl,
+        y_ecl * np.cos(eps) - z_ecl * np.sin(eps),
+        y_ecl * np.sin(eps) + z_ecl * np.cos(eps),
+    ])
+    if frame == 'j2000':
+        return r_j2000
+    if frame != 'date':
+        raise ValueError(f"frame は 'date' か 'j2000': {frame!r}")
+    return precession_j2000_to_date(jd) @ r_j2000
+
+
+def sun_direction_at_jd(jd: float) -> np.ndarray:
+    """地球中心→太陽の単位ベクトル（of-date ECI）。"""
+    r = sun_position_eci_km(jd)
+    return r / np.linalg.norm(r)
+
+
 def compute_lvlh_frame(position_km: np.ndarray, velocity_km: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     位置・速度ベクトルから LVLH(RSW = RTN) 座標系の基底を計算
@@ -550,7 +649,12 @@ def compute_target_position_km(lat_deg: float, lon_deg: float, alt_km: float) ->
 
 
 def compute_observer_position_km(lat_deg: float, lon_deg: float, alt_km: float) -> np.ndarray:
-    """地上観測者位置 [km]（簡易、地球自転は無視。compute_target_position_km と同じ式）"""
+    """地上観測者の地球固定位置 [km]（球体地球、自転角 0 の ECI = ECEF）。
+
+    時刻 t の ECI 位置は呼び出し側が自転角（compute_earth_rotation_deg / GMST）で
+    z 軸まわりに回す（satellite_orbit.observer_position_eci_km）。
+    compute_target_position_km と同じ式。
+    """
     return compute_target_position_km(lat_deg, lon_deg, alt_km)
 
 

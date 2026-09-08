@@ -46,7 +46,12 @@ python mrender.py gui                 # http://127.0.0.1:8600 が開く
   （`llvm_ad_rgb`）で全機能が動く。Apple Silicon の Mac で動作確認済み。
 - **`assets/starfield.exr`（287 MB）は clone に含まれない**。GitHub の
   100 MB 上限を超えるため Git 管理外で、初回起動時に `tools/generate_starfield.py`
-  が HYG カタログから自動生成する（約 1 秒、毎回同じ内容）。
+  が HYG カタログから自動生成する（約 3 秒、毎回同じ内容）。生成時に投影規約を
+  `assets/starfield.exr.json` に記録し、規約が古い／サイドカーが無い EXR は起動時に
+  自動で作り直す。**2026-09-08 に投影規約を変更**（旧 EXR は Mitsuba envmap に対して
+  鏡像だった）したので、それ以前に生成した EXR がある環境（DGX 等）は初回起動で
+  一度だけ再生成が走る。手動で作り直す場合:
+  `python tools/generate_starfield.py --width 8192 --milky-way --output assets/starfield.exr`
 - **NASA Blue Marble の 500 m/px タイル**は任意。地球背景を高解像度にしたい
   場合だけ `python tools/prepare_bmng.py` で取得する（無くても既定テクスチャで動く）。
 - **Blender は必須ではない**。Draco 圧縮 GLB を初めて読み込む時の変換にのみ使う。
@@ -396,7 +401,8 @@ earth:
 lighting:
   advanced_optics: false          # 黒体放射太陽 + starfield envmap を使う
   sun_temperature: 5778.0         # 太陽の有効温度 [K]
-  sun_angle: null                 # 太陽方向の手動指定 [deg]、null で自動
+  sun_angle: null                 # 太陽の黄経 [deg]（0=春分点方向）、null で自動
+  epoch_utc: null                 # ISO 8601 UTC。指定で太陽=VSOP87・自転=GMST の実時刻
   sun_rotate: false               # 時間で太陽方向を回転
   sun_rotate_period: 60.0         # 太陽回転の周期 [s]
   sun_rotate_speed: 1.0           # 太陽回転速度倍率

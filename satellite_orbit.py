@@ -39,7 +39,10 @@ from orbit_mechanics import (
     compute_orbital_position,
     compute_sun_position,
     compute_target_position_km,
+    gmst_rad,
     is_earth_occluded,
+    mean_obliquity_rad,
+    sun_direction_at_jd,
 )
 from scene_builder import (
     apply_tonemap,
@@ -194,33 +197,49 @@ def compute_object_state(spec: ObjectSpec, time_s: float, sun_direction: np.ndar
     )
 
 
+def frame_jd(time_s: float, config: RenderConfig) -> Optional[float]:
+    """フレーム時刻のユリウス日。epoch_utc 未指定なら None（簡易モデル経路）。"""
+    epoch_jd = getattr(config.animation, 'epoch_jd', None)
+    if epoch_jd is None:
+        return None
+    return float(epoch_jd) + float(time_s) / 86400.0
+
+
+def ecliptic_longitude_to_direction(lon_deg: float, jd: Optional[float] = None) -> np.ndarray:
+    """黄経 λ [deg]（黄緯 0）→ ECI 単位ベクトル。黄道傾斜は of-date（既定 J2000 値）。"""
+    lam = np.radians(lon_deg)
+    eps = mean_obliquity_rad(jd if jd is not None else 2451545.0)
+    return np.array([np.cos(lam), np.sin(lam) * np.cos(eps), np.sin(lam) * np.sin(eps)])
+
+
 def resolve_sun_direction(time_s: float, config: RenderConfig) -> np.ndarray:
     """指定時刻の太陽方向（ECI 単位ベクトル）を決める。
 
     優先順位:
         1. ``sun_rotate`` が真: 演出用に時刻と共に回転する太陽方向で上書き
-           （周期 ``sun_rotate_period_s``、倍率 ``sun_rotate_speed``）
-        2. ``sun_angle`` 指定: 黄道面に対する角度 [deg] から固定方向を構成
-        3. それ以外: ``compute_sun_position(time_s)`` で天文学的な自動計算
+           （黄経が周期 ``sun_rotate_period_s``、倍率 ``sun_rotate_speed`` で進む）
+        2. ``sun_angle`` 指定: 太陽の黄経 [deg]（黄緯 0、黄道傾斜 23.44°）から固定方向
+           （0 = 春分点方向 +x、90 = 夏至方向で赤緯 +23.44°）
+        3. ``epoch_utc`` 指定: VSOP87 による実時刻の太陽（平均分点 of date）
+        4. それ以外: ``compute_sun_position(time_s)`` の簡易円運動
+           （t=0 で太陽 = +x = 春分点方向という暗黙のエポック）
 
     戻り値は地球中心から太陽へ向かう ECI 単位ベクトル。
     """
+    jd = frame_jd(time_s, config)
     if config.lighting.sun_angle is not None:
-        # 固定角: XY 平面で角度を取り、Z 方向に少し傾ける（季節感の表現）。
-        angle_rad = np.radians(config.lighting.sun_angle)
-        sun_direction = np.array([np.cos(angle_rad), np.sin(angle_rad), 0.3])
-        sun_direction = sun_direction / np.linalg.norm(sun_direction)
+        sun_direction = ecliptic_longitude_to_direction(float(config.lighting.sun_angle), jd)
+    elif jd is not None:
+        sun_direction = sun_direction_at_jd(jd)
     else:
         sun_direction = compute_sun_position(time_s)
 
     if config.lighting.sun_rotate:
-        # 演出モード: 太陽方向を強制的に時刻 t に応じて回転させる。
+        # 演出モード: 太陽の黄経を時刻 t に応じて回転させる。
         period_s = max(config.lighting.sun_rotate_period_s, 1e-6)
         angle = (time_s / period_s) * 360.0 * config.lighting.sun_rotate_speed
-        angle_rad = np.radians(angle)
-        sun_direction = np.array([np.cos(angle_rad), np.sin(angle_rad), 0.2])
-        sun_direction = sun_direction / np.linalg.norm(sun_direction)
-    return sun_direction
+        sun_direction = ecliptic_longitude_to_direction(angle, jd)
+    return sun_direction / np.linalg.norm(sun_direction)
 
 
 def build_scene_objects(states: List[ObjectState], config: RenderConfig,
@@ -419,9 +438,17 @@ def resolve_camera(states: List[ObjectState], config: RenderConfig) -> Tuple[Seq
 
 
 def compute_earth_rotation_deg(time_s: float, config: RenderConfig) -> float:
-    """地表ターゲット・バッチ・ライブ描画が共用する地球自転角。"""
+    """地表ターゲット・観測者・バッチ・ライブ描画が共用する地球自転角 [deg]。
+
+    自転角 0 でグリニッジ子午線が ECI +x（テクスチャ経度 0°）。``epoch_utc`` 指定時は
+    GMST（IAU 1982、of-date 分点）そのもので、``earth_rotation_period_hours`` /
+    ``earth_rotation_speed`` は使わない。未指定なら t=0 で 0° の簡易モデル。
+    """
     if not config.earth.earth_rotation:
         return 0.0
+    jd = frame_jd(time_s, config)
+    if jd is not None:
+        return float(np.degrees(gmst_rad(jd)))
     seconds_per_day = config.earth.earth_rotation_period_hours * 3600.0
     if not np.isfinite(seconds_per_day) or seconds_per_day <= 0:
         raise ValueError('earth_rotation_period_hours は有限の正数である必要があります')
@@ -488,6 +515,76 @@ def build_earth_textures(
     return earth_rotation_deg, night_emission_texture, cloud_opacity_texture
 
 
+def observer_position_eci_km(time_s: float, config: RenderConfig,
+                             observer_lat: float, observer_lon: float,
+                             observer_alt_km: float) -> np.ndarray:
+    """時刻 t の地上観測者 ECI 位置 [km]（地表ターゲットと同じ自転角で回す）。"""
+    fixed = compute_observer_position_km(observer_lat, observer_lon, observer_alt_km)
+    return rotate_vector_z(fixed, compute_earth_rotation_deg(time_s, config))
+
+
+_MESH_RADIUS_CACHE: Dict[Tuple[str, float], float] = {}
+
+
+def _mesh_local_radius(path: str) -> float:
+    """OBJ/PLY(ASCII) 頂点の原点からの最大距離（モデルローカル単位）。失敗時は 1.0。"""
+    try:
+        key = (str(path), Path(path).stat().st_mtime)
+    except OSError:
+        return 1.0
+    if key in _MESH_RADIUS_CACHE:
+        return _MESH_RADIUS_CACHE[key]
+    r_max_sq = 0.0
+    try:
+        with open(path, 'r', errors='ignore') as handle:
+            for line in handle:
+                if line.startswith('v '):
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        x, y, z = float(parts[1]), float(parts[2]), float(parts[3])
+                        r_max_sq = max(r_max_sq, x * x + y * y + z * z)
+    except (OSError, ValueError):
+        return 1.0
+    radius = float(np.sqrt(r_max_sq)) if r_max_sq > 0 else 1.0
+    _MESH_RADIUS_CACHE[key] = radius
+    return radius
+
+
+def estimate_bounding_radius(objects: Dict[str, Any], center: np.ndarray) -> float:
+    """シーン辞書断片（to_world 付き shape 群）の ``center`` まわりバウンディング半径。
+
+    各 shape について |平行移動 − center| + ローカル半径 × 最大スケール。手続き形状
+    （cube/sphere/cylinder）はローカル半径 √3、メッシュは頂点から求める。
+    """
+    radius = 0.0
+    for obj in objects.values():
+        if not isinstance(obj, dict) or 'to_world' not in obj:
+            continue
+        matrix = np.asarray(obj['to_world'].matrix, dtype=float).reshape(4, 4)
+        translation = matrix[:3, 3]
+        scale = float(np.max(np.linalg.norm(matrix[:3, :3], axis=0)))
+        if obj.get('type') in ('obj', 'ply') and obj.get('filename'):
+            local = _mesh_local_radius(str(obj['filename']))
+        else:
+            local = float(np.sqrt(3.0))
+        radius = max(radius, float(np.linalg.norm(translation - center)) + local * scale)
+    return radius
+
+
+def resolve_light_curve_fov(fov: Optional[float], objects: Dict[str, Any],
+                            target_scene: np.ndarray, range_scene: float,
+                            margin: float = 1.5) -> float:
+    """ライトカーブ用カメラの画角 [deg]。明示指定があればそれ、None なら物体の
+    見かけサイズ（バウンディング半径 × margin）から自動で決めてクリップを防ぐ。"""
+    if fov is not None:
+        return float(fov)
+    radius = estimate_bounding_radius(objects, target_scene)
+    if radius <= 0 or range_scene <= 0:
+        return 2.0
+    ratio = min(margin * radius / range_scene, 0.99)
+    return float(np.clip(np.degrees(2.0 * np.arctan(ratio)), 0.02, 120.0))
+
+
 def render_light_curve(
     frames: int,
     start_frame: int,
@@ -519,15 +616,18 @@ def render_light_curve(
     この 2 つは独立で、LEO では後者（食）が軌道の ~1/3 を占める。
     出力 CSV はデフォルトで ``output_dir/light_curve.csv``。
     """
-    # 地上観測者位置（緯度経度高度 → ECI [km]）。
-    observer_km = compute_observer_position_km(observer_lat, observer_lon, observer_alt_km)
-    observer_render = observer_km * SCALE_FACTOR
     records: List[Dict[str, Any]] = []
+    fov_used: Optional[float] = None
 
     for frame in range(start_frame, end_frame):
         time_s = compute_frame_time(frame, frames, config, default_time_span_s(primary))
         sun_direction = resolve_sun_direction(time_s, config)
         state = compute_object_state(primary, time_s, sun_direction)
+        # 地上観測者位置（緯度経度高度 → 自転角で回した ECI [km]）。地表ターゲットと
+        # 同じ compute_earth_rotation_deg を使うので地球テクスチャと整合する。
+        observer_km = observer_position_eci_km(time_s, config, observer_lat, observer_lon,
+                                               observer_alt_km)
+        observer_render = observer_km * SCALE_FACTOR
         # スラントレンジ（観測者→物体）。
         range_km = float(np.linalg.norm(state.position_km - observer_km))
         # 物体から観測者を見る方向（後方散乱の文脈では「観測方向」の逆）。
@@ -566,6 +666,14 @@ def render_light_curve(
             camera_position = observer_render
             camera_target = state.position_km * SCALE_FACTOR
             camera_up = compute_camera_up(camera_position, camera_target)
+            # 画角: 指定が無ければ物体が視野に収まるよう自動（既定 satellite_scale は
+            # 地球半径単位で数十 km 級になるため、固定 2° では全距離でクリップする）。
+            frame_fov = resolve_light_curve_fov(
+                fov, objects, np.asarray(camera_target, dtype=float),
+                float(np.linalg.norm(np.asarray(camera_target) - np.asarray(camera_position))))
+            if fov_used is None:
+                fov_used = frame_fov
+                print(f"  ライトカーブ画角: {frame_fov:.4f}° ({'指定' if fov is not None else '自動'})")
             # ライトカーブ用シーン: 地球・環境光・星空を含めず、物体だけを撮る。
             scene_dict = create_scene(
                 camera_position=camera_position,
@@ -576,7 +684,7 @@ def render_light_curve(
                 earth_texture=None,
                 width=config.width,
                 height=config.height,
-                fov=fov,
+                fov=frame_fov,
                 use_advanced_lighting=config.lighting.use_advanced_optics,
                 sun_temperature=config.lighting.sun_temperature,
                 starfield_brightness=0.0,
@@ -821,6 +929,11 @@ def print_run_summary(
         print(f"  緯度/経度/高度: {args.target_lat}°, {args.target_lon}°, {args.target_alt} km")
 
     print('\n光学設定:')
+    epoch_utc = getattr(args, 'epoch_utc', None)
+    if epoch_utc:
+        print(f"  エポック: {epoch_utc} UTC（太陽=VSOP87 / 自転角=GMST、平均分点 of date）")
+    else:
+        print('  エポック: 未指定（簡易モデル: t=0 で太陽=+x, グリニッジ=+x）')
     print(f"  高度な光学機能: {'有効' if args.advanced_optics else '無効'}")
     if args.advanced_optics:
         print(f"  太陽色温度: {args.sun_temperature} K")
@@ -840,7 +953,8 @@ def print_run_summary(
         print('\nライトカーブ:')
         print(f"  対象: {primary.name}")
         print(f"  観測者: {args.observer_lat}°, {args.observer_lon}°, {args.observer_alt} km")
-        print(f"  視野角: {args.light_curve_fov}°")
+        fov_text = '自動（物体の見かけサイズから）' if args.light_curve_fov is None else f"{args.light_curve_fov}°"
+        print(f"  視野角: {fov_text}")
         print(f"  サンプル数: {args.light_curve_samples}")
 
     print(f"{'=' * 60}\n")

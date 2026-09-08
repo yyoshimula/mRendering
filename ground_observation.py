@@ -13,8 +13,9 @@ render/lightcurve 系との違い（このモジュールが新規に持つ物�
   - 実時刻: UTC エポック (ISO 8601) → ユリウス日。太陽位置は yoshimulib の
     VSOP87 暦、GMST は `orbit.sidereal.gmst`
   - 軌道入力: ケプラー要素 / CSV ephemeris / **TLE (SGP4 伝播)** の 3 系統。
-    TLE は sgp4 パッケージで伝播し、TEME ≈ ECI と近似する（両分点差 ~20 分角。
-    ポインティング・測光には無視でき、恒星背景の位置ずれも視覚上問題ない）
+    TLE は sgp4 パッケージで伝播し、TEME ≈ ECI（平均分点 of date）と近似する
+    （TEME と MOD の差は分点方程式 ≲1′。太陽・Hipparcos 恒星は J2000 から歳差補正
+    して同じ of-date 系に揃えるので、星野は 2026 年でも ≲1′ で整合する）
   - 本影/半影: yoshimulib `shadow()`（Montenbruck & Gill 円錐影）の照射率
     ν∈[0,1] をそのまま太陽放射照度に掛ける（半影で滑らかに減光）
   - 絶対測光: 太陽 directional emitter の放射照度を物理値 S0 [W/m²] で与え、
@@ -117,10 +118,19 @@ FWHM_TO_SIGMA = 1.0 / (2.0 * math.sqrt(2.0 * math.log(2.0)))  # ≈ 1/2.3548
 # Rec.709 輝度係数（scene_builder.compute_image_flux と同じ重み）
 LUM_WEIGHTS = np.array([0.2126, 0.7152, 0.0722])
 
-# 物理定数（光子エネルギー計算用）
+# 光電子換算（V バンド）
+# 等級→照度は E = S0·10^(−0.4(m − m_sun)) の「ボロメトリック換算」なので、その E を
+# 550 nm の光子エネルギーで割ると全波長 1361 W/m² 分の光子を数えてしまい V バンド
+# 検出器の実カウントより ≈8.6 倍多くなる。光子数は V=0 の標準光子流束から直接求める:
+#   F_ph(V=0) = 3.63e-9 erg/s/cm²/Å × 880 Å ÷ (hc/550 nm) ≈ 8.84e9 photons/s/m²
+#   （Bessell 1979 / Johnson V、Δλ_eff ≈ 880 Å）
+# 物体・空背景とも同じ換算を通すので SNR の比は一貫する。
 PLANCK_H = 6.62607015e-34       # [J·s]
 LIGHT_C = 2.99792458e8          # [m/s]
 LAMBDA_EFF_M = 550e-9           # V バンド実効波長 [m]
+V_BAND_PHOTON_FLUX_M0 = 3.63e-9 * 1e-7 * 1e4 * 880.0 / (PLANCK_H * LIGHT_C / LAMBDA_EFF_M)
+V_BAND_SOLAR_IRRADIANCE_WM2 = V_BAND_PHOTON_FLUX_M0 * 10.0 ** (-0.4 * SUN_APPARENT_MAG) \
+    * (PLANCK_H * LIGHT_C / LAMBDA_EFF_M)   # ≈ 159 W/m²: 太陽の V バンド帯域内照度
 
 # 代理カメラ距離の上限倍率: d_r = min(range, R_bound × この値)。
 # 球レイ交差の判別式は (R/d)² が float32 eps (1.2e-7) を割ると桁落ちで壊れる
@@ -145,48 +155,12 @@ def _luminance(rgb: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # 時刻・太陽
 # ---------------------------------------------------------------------------
-def parse_epoch_jd(epoch_utc: str) -> float:
-    """ISO 8601 UTC 文字列 → ユリウス日。naive は UTC とみなす。"""
-    text = epoch_utc.strip().replace('Z', '+00:00')
-    dt = datetime.fromisoformat(text)
-    if dt.tzinfo is not None:
-        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-    sec = dt.second + dt.microsecond * 1e-6
-    return float(gc2jd(dt.year, dt.month, dt.day, dt.hour, dt.minute, sec))
-
-
-_VSOP_CACHE = None
-
-
-def sun_position_eci_km(jd: float) -> np.ndarray:
-    """VSOP87 による太陽の地心位置 [km]（J2000 ≈ ECI）。係数はモジュール内キャッシュ。
-
-    yoshimulib の `sun_moon.ephemeris.sun()` は内部の `au2km(sun_au, const)`
-    呼び出しが定数オブジェクトを AU 値の位置に渡してしまう既知の TypeError を
-    持つため、その手前の `sun_lon_lat_r()`（VSOP87 本体、黄経/黄緯/距離）から
-    黄道→赤道変換（x 軸まわり +EPS0 回転）を自前で行う。
-    """
-    global _VSOP_CACHE
-    if _VSOP_CACHE is None:
-        from yoshimulib.orbit.constants import OrbitalConstants, vsop_const
-        from yoshimulib.sun_moon.ephemeris import sun_lon_lat_r
-        _VSOP_CACHE = (OrbitalConstants(), vsop_const(), sun_lon_lat_r)
-    const, earth_vsop, _sun_lon_lat_r = _VSOP_CACHE
-    lon, lat, r_au = _sun_lon_lat_r(np.array([jd]), const, earth_vsop)
-    lon = float(np.atleast_1d(lon)[0])
-    lat = float(np.atleast_1d(lat)[0])
-    r_km = float(np.atleast_1d(r_au)[0]) * const.AU
-    # 黄道直交座標
-    x_ecl = r_km * math.cos(lat) * math.cos(lon)
-    y_ecl = r_km * math.cos(lat) * math.sin(lon)
-    z_ecl = r_km * math.sin(lat)
-    # 黄道→赤道（J2000 平均黄道傾斜 EPS0、x 軸まわり回転）
-    eps = float(const.EPS0)
-    return np.array([
-        x_ecl,
-        y_ecl * math.cos(eps) - z_ecl * math.sin(eps),
-        y_ecl * math.sin(eps) + z_ecl * math.cos(eps),
-    ])
+# 時刻・太陽は orbit_mechanics に集約（render 系 / relative absolute と共用）。
+# 座標系: 太陽・恒星は J2000 → 平均分点 of date へ歳差補正し、GMST（of date）で回す
+# 観測者・TLE(TEME) と同じ系に揃える（2026 年で J2000 との差 ≈ 0.37° = 22′）。
+from orbit_mechanics import (  # noqa: E402,F401  (re-export: 旧 import 互換)
+    parse_epoch_jd, sun_position_eci_km, precession_j2000_to_date,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -300,8 +274,9 @@ def stars_in_field(cat: Dict[str, np.ndarray], boresight: np.ndarray,
     """視野コーン内の恒星の (単位ベクトル (N,3), 等級 (N,)) を返す。
 
     固有運動は単位球上で伝播する（SatCap catalog.propagate_proper_motion と
-    同式。pm_ra_cosdec は cosδ 込みの mas/yr）。座標は ICRS ≈ J2000 ≈ ECI
-    とみなす（フレームバイアス 23 mas は無視）。
+    同式。pm_ra_cosdec は cosδ 込みの mas/yr）。カタログ座標 ICRS ≈ J2000 を
+    歳差行列で平均分点 of date（本プロジェクトの ECI）へ回して返す
+    （フレームバイアス 23 mas・章動 ~17″・光行差 ~20″ は無視）。
     """
     mask = cat['mag'] <= mag_limit
     unit = cat['unit'][mask]
@@ -324,6 +299,9 @@ def stars_in_field(cat: Dict[str, np.ndarray], boresight: np.ndarray,
     shift = (pm_a[:, None] * e_alpha + pm_d[:, None] * e_delta) * (years * MAS_TO_RAD)
     moved = unit + shift
     moved /= np.linalg.norm(moved, axis=1, keepdims=True)
+    # ICRS(≈J2000) → 平均分点 of date（観測者の GMST 回転と同じ系へ）。
+    # 歳差は 50.3″/yr なので 2026 年で 22′、狭視野では省略できない。
+    moved = moved @ precession_j2000_to_date(jd).T
     return moved, mag
 
 
@@ -713,18 +691,26 @@ def apply_turbulence_psf(acc: np.ndarray, args: argparse.Namespace,
 # ---------------------------------------------------------------------------
 # センサモデル（CCD 方程式。SatCap satcap/sim/camera.py のノイズ式を物理単位で）
 # ---------------------------------------------------------------------------
+def photons_per_wm2(s0_wm2: float) -> float:
+    """ボロメトリック換算照度 E [W/m²]（E = S0·10^(−0.4(m−m_sun))）→ V バンド光子流束
+    [photons/s/m²] の係数。E·係数 = F_ph(V=0)·10^(−0.4 m_V)。"""
+    return V_BAND_PHOTON_FLUX_M0 * 10.0 ** (-0.4 * SUN_APPARENT_MAG) / float(s0_wm2)
+
+
 def sensor_electrons(e_px_lum: np.ndarray, args: argparse.Namespace,
                      rng: np.random.Generator) -> np.ndarray:
     """ピクセル照度 [W/m²] → ADU 画像（ショット + 読み出しノイズ、飽和クリップ）。
 
-    光電子数: N_e = E·A·τ·t_exp / (hc/λ) · QE
+    光電子数: N_e = F_ph(V=0)·10^(−0.4 m_V)·A·τ·t_exp·QE、
+              m_V = m_sun − 2.5 log10(E/S0) ⇔ N_e = E·(F_ph(V=0)·10^(0.4|m_sun|)/S0)·A·τ·t·QE
+              （E を hc/λ で割る全波長換算は V バンドより ≈8.6 倍過大なので使わない）
     ショットノイズ: Poisson(N_e)（λ が大きい画素はガウス近似）
     読み出し: N(0, read_noise_e)、その後フルウェルでクリップし gain で ADU 化。
     """
     area = math.pi * (float(args.aperture_m) / 2.0) ** 2
-    photon_energy = PLANCK_H * LIGHT_C / LAMBDA_EFF_M
     scale = (area * float(args.throughput) * float(args.exposure_s)
-             * float(args.quantum_efficiency) / photon_energy)
+             * float(args.quantum_efficiency)
+             * photons_per_wm2(float(args.sun_irradiance_wm2)))
     electrons = np.clip(e_px_lum, 0.0, None) * scale
 
     # ショットノイズ（λ > 1e6 はガウス近似。np.random.poisson の λ 上限対策）
@@ -802,7 +788,7 @@ class _KeplerOrbit:
 
 
 class _TleOrbit:
-    """TLE + SGP4 伝播。位置は TEME だが ECI(J2000) と近似して扱う
+    """TLE + SGP4 伝播。位置は TEME だが平均分点 of-date の ECI と近似して扱う
     （両分点差 ~20 分角。モジュール冒頭コメント参照）。"""
 
     def __init__(self, line1: str, line2: str, jd0: float, name: str = ''):
@@ -1350,7 +1336,7 @@ def _run(args: argparse.Namespace) -> None:
     if isinstance(ctx.orbit, _TleOrbit):
         print(f"  軌道: TLE {args.tle}"
               + (f" ({ctx.orbit.name})" if ctx.orbit.name else '')
-              + "（SGP4、TEME≈ECI 近似）")
+              + "（SGP4、TEME≈ECI(of-date) 近似）")
     elif ctx.eph is not None:
         print(f"  軌道: CSV ephemeris {args.orbit_csv}")
     else:

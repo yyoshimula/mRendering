@@ -93,7 +93,11 @@ def sun_lon_lat_r(jd: np.ndarray, const, earth_vsop: np.ndarray) -> tuple:
     """
     # Sun's geocentric longitude, latitude, and distance
 
-    Referred to the mean ecliptic and equinox of date.
+    Referred to the mean ecliptic and equinox of **J2000.0** (the VSOP87 series in
+    `earth_vsop87` is of-date; `precession(J2000, jd)` below rotates it back to
+    J2000, which is what `sun()` expects). Use `earth_vsop87` directly (lon+pi,
+    -lat) if of-date coordinates are needed. 2026-09-08: docstring corrected —
+    it used to claim "equinox of date" while the code returned J2000.
 
     Parameters
     ----------

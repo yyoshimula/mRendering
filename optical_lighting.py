@@ -60,54 +60,92 @@ class MoonParameters:
     phase: float = 1.0
 
 
-def blackbody_to_rgb(temperature_kelvin: float) -> np.ndarray:
-    """
-    黒体放射の色温度から sRGB 色を計算
+# CIE 1931 2° 等色関数の多ローブガウス近似（Wyman, Sloan, Shirley 2013, JCGT）。
+# λ は nm。最大誤差 ~1% で Planck 積分の色度には十分。
+def _piecewise_gaussian(lam: np.ndarray, mu: float, s1: float, s2: float) -> np.ndarray:
+    sigma = np.where(lam < mu, s1, s2)
+    return np.exp(-0.5 * ((lam - mu) / sigma) ** 2)
 
-    厳密には Planck 則 B_λ(T) を可視波長域で CIE 等色関数と畳み込み、
-    XYZ → sRGB 変換するのが正攻法。本関数は Tanner Helland の経験式で
-    その結果を区分多項式・対数で近似する（実装が単純で十分な視覚的精度）。
+
+def cie1931_xyz(lam_nm: np.ndarray) -> np.ndarray:
+    """波長 [nm] (N,) → CIE 1931 x̄ ȳ z̄ (N,3)。"""
+    lam = np.asarray(lam_nm, dtype=float)
+    x = (1.056 * _piecewise_gaussian(lam, 599.8, 37.9, 31.0)
+         + 0.362 * _piecewise_gaussian(lam, 442.0, 16.0, 26.7)
+         - 0.065 * _piecewise_gaussian(lam, 501.1, 20.4, 26.2))
+    y = (0.821 * _piecewise_gaussian(lam, 568.8, 46.9, 40.5)
+         + 0.286 * _piecewise_gaussian(lam, 530.9, 16.3, 31.1))
+    z = (1.217 * _piecewise_gaussian(lam, 437.0, 11.8, 36.0)
+         + 0.681 * _piecewise_gaussian(lam, 459.0, 26.0, 13.8))
+    return np.column_stack([x, y, z])
+
+
+# XYZ → 線形 sRGB (D65)、IEC 61966-2-1
+_XYZ_TO_LINEAR_SRGB = np.array([
+    [3.2406, -1.5372, -0.4986],
+    [-0.9689, 1.8758, 0.0415],
+    [0.0557, -0.2040, 1.0570],
+])
+
+
+def blackbody_to_rgb(temperature_kelvin: float) -> np.ndarray:
+    """黒体放射の色温度 → **線形** sRGB（最大成分 = 1 に正規化）。
+
+    Planck 則 B_λ(T) を 380–780 nm で CIE 1931 等色関数（Wyman 2013 近似）と積分し
+    XYZ → 線形 sRGB へ変換する。返り値は放射照度・放射輝度にそのまま乗算できる
+    線形値（ガンマ符号化なし）。以前の Tanner Helland 式は sRGB 表示値（ガンマ
+    符号化済み）のフィットで、線形空間で使うと 5778 K の G が +8%、B が +10% 白寄り
+    になっていた（2026-09-08 修正）。
+
+    参考値: 5778 K → ≈ (1.00, 0.88, 0.82)、6504 K (D65 相当) → ≈ (1.00, 0.98, 1.00)。
 
     Args:
-        temperature_kelvin: 色温度 [K]（例: 太陽 5778, 白熱電球 2700, 青空 ~10000）
+        temperature_kelvin: 色温度 [K]（例: 太陽 5778、白熱電球 2700、A 型星 ~9500）
 
     Returns:
-        RGB値（正規化済み、各成分 0-1。sRGB 想定）
+        線形 RGB（各成分 0–1、最大成分 1）
     """
-    # 簡易的な色温度→RGB変換（経験式）
-    # 出典: Tanner Helland's algorithm
+    T = max(float(temperature_kelvin), 1.0)
+    lam_nm = np.arange(380.0, 780.5, 1.0)
+    lam_m = lam_nm * 1e-9
+    h, c, k = 6.62607015e-34, 2.99792458e8, 1.380649e-23
+    with np.errstate(over='ignore'):
+        planck = lam_m ** -5 / np.expm1(h * c / (lam_m * k * T))
+    xyz = cie1931_xyz(lam_nm).T @ planck  # (3,)
+    rgb = _XYZ_TO_LINEAR_SRGB @ xyz
+    rgb = np.clip(rgb, 0.0, None)
+    peak = float(np.max(rgb))
+    if peak <= 0:
+        return np.ones(3)
+    return rgb / peak
 
-    temp = temperature_kelvin / 100.0
 
-    # Red
-    if temp <= 66:
-        red = 1.0
-    else:
-        red = temp - 60
-        red = 329.698727446 * (red ** -0.1332047592)
-        red = np.clip(red / 255.0, 0, 1)
+# ---------------------------------------------------------------------------
+# 星空 envmap の向き
+#
+# Mitsuba `envmap` のローカル座標は u = atan2(x, −z)/2π, v = acos(y)/π
+# （極 = ±y、u はローカル +y まわり **左手回り**）。天球の赤経は北天極まわり右手回り
+# なので、画像を「u = 1 − RA/2π, v = 1/2 − Dec/π」（実際の空を内側から見た星図と
+# 同じ向き、tools/generate_starfield.py）で描き、ローカル軸を
+#   local +y → ECI +z（北天極）、local −z → ECI +x（春分点 RA=0）、local +x → ECI −y
+# に写す固定回転（det = +1）を to_world に与えると、envmap 上の星が ECI の正しい
+# 方向に出る。RA を u に直接写す旧規約は行列式 −1（鏡像）で回転では補正不能だった。
+# ---------------------------------------------------------------------------
+STARFIELD_LOCAL_TO_ECI = np.array([
+    [0.0, 0.0, -1.0],
+    [-1.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0],
+])
 
-    # Green
-    if temp <= 66:
-        green = temp
-        green = 99.4708025861 * np.log(green) - 161.1195681661
-        green = np.clip(green / 255.0, 0, 1)
-    else:
-        green = temp - 60
-        green = 288.1221695283 * (green ** -0.0755148492)
-        green = np.clip(green / 255.0, 0, 1)
 
-    # Blue
-    if temp >= 66:
-        blue = 1.0
-    elif temp <= 19:
-        blue = 0.0
-    else:
-        blue = temp - 10
-        blue = 138.5177312231 * np.log(blue) - 305.0447927307
-        blue = np.clip(blue / 255.0, 0, 1)
-
-    return np.array([red, green, blue])
+def starfield_to_world_matrix(eci_to_scene: Optional[np.ndarray] = None) -> np.ndarray:
+    """星空 envmap の to_world 4×4（numpy）。eci_to_scene は ECI→シーンの回転（任意）。"""
+    rot = STARFIELD_LOCAL_TO_ECI
+    if eci_to_scene is not None:
+        rot = np.asarray(eci_to_scene, dtype=float).reshape(3, 3) @ rot
+    m = np.eye(4)
+    m[:3, :3] = rot
+    return m
 
 
 def solar_irradiance_to_render_scale(solar_constant: float, intensity_scale: float = 5.0) -> float:
