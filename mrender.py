@@ -12,6 +12,7 @@
   rotation    単機のオイラー回転運動（タンブリング）をレンダ
   relative    軌道力学なし、相対位置・相対姿勢のみで 2 機をレンダ
   onboard     render の機載カメラ専用エイリアス（view_mode=satellite 既定）
+  groundobs   地上望遠鏡からの光学観測（見かけ等級ライトカーブ + 望遠鏡像）
 
 すべての動詞は `--config` で YAML プリセットを読み、`runs/<ts>_<verb>_<name>/`
 配下に成果物と manifest.json を出力する。
@@ -24,7 +25,8 @@ import sys
 from typing import List, Optional
 
 # ディスパッチ可能な verb（サブコマンド）一覧。ここに無い名前は弾かれる。
-VERBS = ('render', 'lightcurve', 'preview', 'rotation', 'relative', 'onboard', 'gui')
+VERBS = ('render', 'lightcurve', 'preview', 'rotation', 'relative', 'onboard',
+         'groundobs', 'gui')
 
 
 def _print_usage(stream=sys.stderr) -> None:
@@ -37,7 +39,8 @@ def _print_usage(stream=sys.stderr) -> None:
         "      python mrender.py preview --config presets/iss.yaml presets/earth_beauty.yaml"
         "  # 後勝ちで差分 YAML を重ねる\n"
         "      python mrender.py rotation --config presets/akatsuki.yaml\n"
-        "      python mrender.py relative --config presets/relative_static.yaml",
+        "      python mrender.py relative --config presets/relative_static.yaml\n"
+        "      python mrender.py groundobs --config presets/groundobs_hubble.yaml",
         file=stream,
     )
 
@@ -64,6 +67,8 @@ def _dispatch(verb: str, rest: List[str]) -> None:
         from verbs.relative import main as run
     elif verb == 'onboard':
         from verbs.onboard import main as run
+    elif verb == 'groundobs':
+        from verbs.groundobs import main as run
     elif verb == 'gui':
         from verbs.gui import main as run
     else:

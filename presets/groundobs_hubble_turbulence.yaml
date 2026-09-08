@@ -1,0 +1,103 @@
+# 地上大型望遠鏡による Hubble 級物体の短露光・大気揺らぎ撮像（形状推定用）
+#
+# シチュエーション:
+#   groundobs_hubble.yaml と同じ天頂パスを、口径 2 m 望遠鏡 + 短露光 10 ms で
+#   撮像する。--turbulence により Kolmogorov 位相スクリーンから瞬時 PSF を
+#   物理生成し、ガウスシーイングの代わりに畳み込む:
+#     - スペックル斑状テクスチャ（瞬時 PSF が斑点状に割れる）
+#     - フレーム間の像揺れ（tip-tilt。サブハーモニクス + 外部スケール L0 で再現）
+#     - 露光平均: サブ露光数 = exposure_s/τ0。長露光ではシーイング円盤に収束
+#   カーネルは総和 1 正規化なので observation.csv の測光値はガウス経路と一致。
+#   実際の地上からの分解形状推定（lucky imaging / shift-and-add の元データ模擬）
+#   を想定した設定。
+#
+# 使用:
+#   python mrender.py groundobs --config presets/groundobs_hubble_turbulence.yaml
+#   # 低品質プレビュー:
+#   python mrender.py groundobs --config presets/groundobs_hubble_turbulence.yaml --frames 5 --samples 32
+#
+# 検証: tools/groundobs_validation/turbulence_validation.py
+#   （位相構造関数 / 長露光 FWHM=シーイング / flux 保存）
+
+time:
+  epoch_utc: "2026-08-19T11:00:00"   # = JST 20:00（薄明終了直後の可視パス帯）
+  frames: 60
+  duration_sec: 120                  # dt = 2 s、天頂から地平線方向へ抜けるパス
+  start_time: 0.0
+
+site:
+  site_lat: 35.0
+  site_lon: 135.0
+  site_alt_m: 600.0
+  min_elevation_deg: 5.0
+
+orbit:
+  altitude_km: 540.0
+  eccentricity: 0.0
+  inclination_deg: 51.6
+  raan_deg: 0.0
+  arg_periapsis_deg: 0.0
+  start_overhead: true
+
+attitude:
+  attitude_mode: tumble
+  Ix: 36000.0
+  Iy: 87000.0
+  Iz: 93000.0
+  wx: 0.02
+  wy: 0.005
+  wz: 0.03
+
+model:
+  model_path: models/hubble.obj
+  model_scale: 0.001
+  model_parts:
+    hbltel_1:              # 本体パネル・ハンドレール・太陽電池パドル
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_1.png}
+      metallic: 0.35
+      roughness: 0.35
+    hbltel_2:              # 開口部・望遠鏡バッフル（黒）・光学系
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_2.png}
+      metallic: 0.1
+      roughness: 0.5
+    hbltel_3:              # アルミ蒸着カプトン MLI
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_3.png}
+      metallic: 0.85
+      roughness: 0.28
+    hbltel_4:              # 銀色 MLI ブランケット
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_4.png}
+      metallic: 0.7
+      roughness: 0.35
+    hbltel_wfc_1:          # WFC ラジエータ
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_w.png}
+      metallic: 0.2
+      roughness: 0.45
+
+telescope:
+  pixel_scale_arcsec: 0.1
+  sensor_px: 256
+  supersample: 3
+  seeing_arcsec: 0.7                 # r0 ≈ 16 cm 相当（良シーイング）
+  extinction_k: 0.15
+  samples: 128
+  max_depth: 6
+  aperture_m: 2.0                    # D/r0 ≈ 13 → スペックルが十分発達する口径
+  exposure_s: 0.01                   # 短露光（τ0=5ms → 2 スクリーン平均）
+
+turbulence:
+  turbulence: true                   # 瞬時 PSF（位相スクリーン）を有効化
+  turbulence_tau0_ms: 5.0            # 大気コヒーレンス時間
+  turbulence_max_screens: 32         # 露光平均スクリーン数の上限
+  turbulence_outer_scale_m: 25.0     # von Kármán 外部スケール（像揺れ幅の上限）
+  turbulence_seed: 0
+
+rendering:
+  stretch: asinh
+  stretch_percentile: 99.9
+  make_video: true
+  video_fps: 15

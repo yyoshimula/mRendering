@@ -1,0 +1,65 @@
+# KUPT（ペガスス天文観測室、九大 元岡、口径 40 cm）の実機較正済みプリセット
+#
+# 実データ検証（tools/groundobs_validation/ANALYSIS.md、2025-02-18 EKRAN 観測 @KUPT）
+# で実測・確定した機材定数を焼き込んである。GEO 観測のシミュレーションを実観測と
+# 同条件で回すためのベース。軌道・ターゲットは用途に応じて上書きすること。
+#
+#   python mrender.py groundobs --config presets/groundobs_kupt.yaml \
+#       [差分 YAML や --tle で軌道・ターゲットを指定]
+#
+# 機材定数の出典:
+# - 口径 0.40 m: ユーザ確認（2026-08-19）。実効焦点距離 2591 mm → f/6.5
+# - ピクセルスケール 0.368"/px: FITS ヘッダ 2594.2 mm を Gaia DR3 プレートソルブで
+#   0.1% 一致確認（QHY294PRO-M 11M MODE = 4.63 µm、bin1。bin2 なら 0.736"/px）
+# - gain_e_per_adu 0.206: photon transfer 実測（Gain=1678, bin1。
+#   薄雲の透過率揺らぎ由来の分散が乗るため下振れの可能性あり）
+# - throughput 0.081 × QE 0.8 → 実効 τ·QE 0.065: 恒星の実測電子レートと
+#   本シミュレータの光子計数規約（太陽定数フルスケール・λ=550nm 単色換算）の
+#   閉合値。V バンド帯域幅・光学系透過・QE 曲線・平均大気減光を全部まとめて
+#   吸収した「このシミュレータ規約での」較正定数である点に注意
+#   （物理的な光学系スループット 0.08 という意味ではない）
+
+site:
+  site_lat: 33.5970                  # 九大 元岡キャンパス
+  site_lon: 130.2237
+  site_alt_m: 50.0
+  min_elevation_deg: 10.0
+
+model:
+  sphere_radius_m: 1.0               # 用途に応じて上書き
+  sphere_albedo: 0.3
+
+observation:
+  tracking_mode: sidereal            # 2025-02-18 の EKRAN 観測と同じ恒星時追尾
+  show_stars: true
+  star_catalog: assets/hipparcos.npz
+  star_mag_limit: 9.0
+
+telescope:
+  pixel_scale_arcsec: 0.368          # bin1（bin2 なら 0.736）
+  sensor_px: 1024                    # QHY294 は 4164×2822。計算量に応じて調整
+  supersample: 2
+  seeing_arcsec: 2.5                 # 元岡の典型値目安（要実測更新）
+  extinction_k: 0.25
+  samples: 128
+  max_depth: 4
+
+sensor:
+  sensor_noise: true
+  aperture_m: 0.40                   # KUPT（中心遮蔽は throughput 側で吸収済み）
+  throughput: 0.081                  # ↑ヘッダ注記参照（実効 τ·QE = 0.065 の閉合値）
+  quantum_efficiency: 0.8
+  exposure_s: 2.0                    # 2025-02-18 の EKRAN 設定
+  read_noise_e: 2.0                  # QHY294 高ゲイン域の公称値目安（未実測）
+  gain_e_per_adu: 0.206              # photon transfer 実測（Gain=1678）
+  full_well_e: 12800                 # 実効: 飽和 62000 ADU × 0.206 e-/ADU
+  sky_mag_arcsec2: 20.0              # 郊外サイト目安（要実測更新）
+  noise_seed: 0
+
+time:
+  frames: 30
+  fps: 0.5                           # dt = 2 s（露光と連続）
+
+rendering:
+  stretch: asinh
+  stretch_percentile: 99.7

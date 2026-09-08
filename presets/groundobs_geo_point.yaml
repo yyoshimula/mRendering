@@ -1,0 +1,62 @@
+# GEO 帯の小型物体（半径 1 m の球体デブリ想定）の点像観測 + CCD ノイズ
+#
+# シチュエーション:
+#   深夜（JST 24:00）に静止軌道上の小物体を 0.5 m 望遠鏡で撮像する。
+#   視直径 ~0.01" ≪ シーイングなので像は完全な点源（シーイング円盤）になり、
+#   見かけ等級 ~13 mag、夜空背景 (21 mag/arcsec²) とショット/読み出しノイズ
+#   込みの現実的な検出画像が得られる。SSA/デブリ観測の検出限界検討用。
+#
+#   球ターゲットは測光の解析検証にも使える:
+#     位相角 α=0 のランバート球で E = (2/3)·albedo·(r/d)²·S0
+#
+# 使用:
+#   python mrender.py groundobs --config presets/groundobs_geo_point.yaml
+
+time:
+  epoch_utc: "2026-08-19T15:00:00"   # = JST 24:00（深夜、GEO は食外で日照）
+  frames: 10
+  fps: 1.0                           # dt = 1 s
+
+site:
+  site_lat: 35.0
+  site_lon: 135.0
+  site_alt_m: 600.0
+  min_elevation_deg: 10.0
+
+orbit:
+  altitude_km: 35786.0               # 静止軌道
+  eccentricity: 0.0
+  inclination_deg: 0.0
+  start_overhead: true               # 観測地に最も近い経度の GEO 位置を選ぶ
+
+attitude:
+  attitude_mode: nadir               # 球なので姿勢は等級に影響しない
+
+model:
+  sphere_radius_m: 1.0
+  sphere_albedo: 0.3
+
+telescope:
+  pixel_scale_arcsec: 0.5
+  sensor_px: 128                     # 視野 64"
+  supersample: 3
+  seeing_arcsec: 2.0
+  extinction_k: 0.20
+  samples: 256                       # 点源測光はレンダノイズが効くので厚めに
+  max_depth: 4
+
+sensor:
+  sensor_noise: true
+  aperture_m: 0.5
+  throughput: 0.7
+  quantum_efficiency: 0.8
+  exposure_s: 1.0
+  read_noise_e: 3.0
+  gain_e_per_adu: 1.0
+  full_well_e: 60000.0
+  sky_mag_arcsec2: 21.0
+  noise_seed: 0
+
+rendering:
+  stretch: asinh
+  stretch_percentile: 99.5

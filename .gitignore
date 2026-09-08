@@ -27,3 +27,15 @@ dist/
 output/
 runs/
 *.log
+
+# tools/prepare_bmng.py で再生成できる高解像度地球タイル
+/assets/textures/earth_day_500m/
+
+# ローカルの実観測データ（SER/FITS・取得時の設定一式）
+/tools/groundobs_validation/20??-??-??/
+
+# 観測検証の生成画像・中間データ（入力 CSV・モデル・設定は追跡する）
+/tools/groundobs_validation/*.png
+/tools/groundobs_validation/*.npy
+/tools/groundobs_validation/*.npz
+/tools/groundobs_validation/*_lc.json

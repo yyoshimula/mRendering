@@ -43,9 +43,62 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## 使用方法
+## GUI（ブラウザ操作）
 
-統合 CLI は `mrender.py` で、以下の 6 サブコマンド（動詞）を提供します。
+CLI を触らずにブラウザから全 verb を操作できます。Flask 等は不要（標準ライブラリのみ）。
+
+```bash
+source venv/bin/activate
+python mrender.py gui                        # http://127.0.0.1:8600 が自動で開く
+python mrender.py gui --port 8765 --no-browser   # ポート変更 / ブラウザ自動起動なし
+```
+
+### アプリとして起動（macOS、ダブルクリック）
+
+```bash
+bash packaging/build_app.sh    # → dist/mRender.app を生成（数百 KB の軽量ランチャー）
+```
+
+`dist/mRender.app` をダブルクリック（`/Applications` へコピーしても可）すると、
+GUI サーバーをバックグラウンド起動して Chrome/Edge/Brave の app モード
+（タブ無しのアプリ風ウィンドウ）で開きます。既にサーバーが動いていれば
+ウィンドウを開くだけ（二重起動しない）。SatCap.app と違い Python は同梱せず
+**このリポジトリの venv を使う**ので、リポジトリ移動後は再ビルドしてください。
+
+- ログ: `runs/_gui_configs/gui_server.log`
+- サーバー停止: `lsof -ti:8600 | xargs kill`
+- アイコン再生成: `venv/bin/python packaging/make_icon.py`（衛星モデルをレンダして生成）
+
+GUI でできること:
+
+- **verb 選択 → プリセット読込 → フォーム編集 → レンダリング開始**（ジョブは
+  `runs/_gui_configs/` に YAML を書き出してサブプロセス実行。進捗・最新フレーム・
+  過去ラン一覧・動画リンクも GUI 上に表示）
+- **YAML 表示 / プリセット保存**: フォーム内容をそのまま `presets/*.yaml` に保存
+- **ライブプレビュー**（右カラムの「ライブプレビュー ON」）: Blender の
+  レンダープレビュー風ビューポート。フォーム変更で即再レンダ（~0.3 s）、
+  アイドル時にフル解像度へ自動リファイン。
+  - 左ドラッグ=オービット / ホイール=ドリー / Shift+ドラッグ=パン
+    （結果は camera_origin/target 欄へ書き戻し）
+  - タイムラインスライダーで tumble/csv の姿勢スクラブ、太陽方位/仰角スライダー
+  - リファイン画像は本番出力とピクセル一致（render 系はビット一致）
+  - 操作中は簡易描画（~0.1-0.2 s）に自動で切り替わり、手を離すと通常品質へ
+- **実行マシン切替**（ヘッダーの「実行マシン」）: ジョブ・ライブプレビューを
+  local / リモート GPU（例: dgx = DGX Spark）で実行。リモート定義は
+  `gui_hosts.json`、結果は `runs/` へ自動ミラー。**事前に
+  `tools/dgx/sync_to_dgx.sh` でコード・アセットの同期が必要**（モデルや
+  プリセットを追加した後も再同期する）。詳細は [tools/dgx/README.md](tools/dgx/README.md)
+- **AI アシスタント**（ヘッダーの「🤖 AI」）: ローカルの `claude` / `cursor-agent`
+  CLI を中継するチャットドロワー。プリセット編集を頼むと GUI に自動反映される
+- **地球背景の高解像度化（relative verb）**: 「宇宙環境」セクションで
+  `earth_gibs` を ON にすると NASA GIBS の実写日次画像（雲込み、要ネット）を
+  可視域だけ取得して背景にする。OFF でも既定で BMNG 500 m/px タイル
+  （`assets/textures/earth_day_500m/`、無ければ `tools/prepare_bmng.py` で生成）
+  から可視域クロップが効く
+
+## 使用方法（CLI）
+
+統合 CLI は `mrender.py` で、以下のサブコマンド（動詞）を提供します。
 すべての設定は YAML プリセット（`--config`）で指定します。
 
 
@@ -57,6 +110,8 @@ pip install -r requirements.txt
 | `rotation`   | 軌道なし、単機のオイラー回転運動（タンブリング）                                    | `frames/frame_*.png`       |
 | `relative`   | 軌道なし、相対位置・相対姿勢のみで 2 機を描画                                    | `frames/frame_*.png`       |
 | `onboard`    | `render` の機載カメラ専用エイリアス（`view_mode=satellite` 既定、片方視点で別物体注視） | `frames/frame_*.png`       |
+| `groundobs`  | 地上望遠鏡からの光学観測（見かけ等級ライトカーブ + 望遠鏡センサ像、TLE/SGP4 対応）              | `observation.csv`, `frames/` |
+| `gui`        | 上記すべてを操作するブラウザ GUI（[GUI（ブラウザ操作）](#guiブラウザ操作) 参照）            | —                          |
 
 
 ```bash
@@ -88,6 +143,9 @@ python mrender.py relative --mode csv --rel-csv input/rel_state_sample.csv
 
 # 軌道上の 2 機（CSV 駆動）— deputy 視点で chief を注視
 python mrender.py onboard --config presets/relative_view.yaml
+
+# 地上望遠鏡からの光学観測（等級ライトカーブ + センサ像。TLE も可）
+python mrender.py groundobs --config presets/groundobs_hubble.yaml
 ```
 
 ### 代表ユースケース（CSV 入力で揃えて使い分け）
@@ -118,6 +176,14 @@ python mrender.py onboard --config presets/relative_view.yaml
 
 サンプルプリセット: `presets/relative_static.yaml`, `presets/relative_tumble.yaml`。
 サンプル CSV: `input/rel_state_sample.csv`。
+
+`relative` はフォトリアル環境オプション（地球背景・太陽黒体色・星空 envmap・
+機載カメラ視点）を持ち、OOS 近接撮像に向きます（例: `presets/oos_hubble.yaml`,
+`presets/relative_ykwn_inspection.yaml`）。地球背景は既定で**可視域だけを
+高解像度ソースから切り出して貼る**（BMNG 500 m/px タイル =
+`assets/textures/earth_day_500m/`、無ければ `tools/prepare_bmng.py` で生成、
+さらに `earth_gibs: true` で NASA GIBS の実写日次画像に切替可。要出典表記:
+NASA GIBS）。詳細は CLAUDE.md の relative オプション節を参照。
 
 ### ラン単位の出力ディレクトリ
 

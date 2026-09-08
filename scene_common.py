@@ -82,8 +82,11 @@ def propagate_attitude(q: np.ndarray, w: np.ndarray, I_body: np.ndarray,
         (q_next, w_next): 更新後の (クォータニオン, 角速度) ※Body 系
     """
     h = dt / substeps
-    # solve_ivp に各サブステップ末尾の角速度を出力させる
-    t_eval = [h * i for i in range(1, substeps + 1)]
+    # solve_ivp に各サブステップ末尾の角速度を出力させる。
+    # 最終点は h*substeps ではなく dt そのものにする（浮動小数で
+    # (dt/substeps)*substeps が dt を 1 ULP 超えると solve_ivp の
+    # 「t_eval が t_span 外」エラーになる。dt=5553.6/180 等で実際に発現）
+    t_eval = [h * i for i in range(1, substeps)] + [dt]
 
     def euler_dynamics(t, w_vec):
         # オイラー方程式: ω̇ = -I⁻¹ · (ω × I·ω)  （トルクフリー）

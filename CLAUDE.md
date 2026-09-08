@@ -52,7 +52,7 @@ GUI サーバーは Mitsuba を import しない軽量設計。relative/rotation
 （旧ハードコード辞書は廃止済み）。プリセットのフォーム未対応キーは
 extraKeys 機構でそのまま透過適用される（フォーム下部に一覧表示）。
 
-**ライブプレビュー（全 verb 対応）**: 右カラムの「ライブプレビュー ON」で
+**ライブプレビュー（全 verb 対応。groundobs は画像のみ・カメラ操作無効）**: 右カラムの「ライブプレビュー ON」で
 Blender のレンダープレビュー風のビューポートが使える。
 Mitsuba 常駐の `live_worker.py` を gui_server が遅延 spawn（既定ポート =
 GUI ポート+1、`--live-port` で変更、ログは `runs/_gui_configs/live_worker.log`）し、
@@ -141,7 +141,46 @@ python simple_rotation.py --frames 30
 python simple_rotation.py --model-path models/akatsuki.obj --model-scale 0.1 --frames 10
 ```
 
-### 実行（relative: 2 機の相対配置、軌道なし）
+### relative の高速化（永続シーン / フレーム並列）
+
+relative はフレームごとの `mi.load_dict`（シーンパース・BVH・カーネル再トレース）
+が CPU 支配的で、GPU バリアントでは GPU 使用率が数 % に張り付く。対策 2 段:
+
+- **永続シーン（既定 ON、`--no-persistent-scene` で従来動作）**: `PersistentScene`
+  が前フレーム scene_dict との差分を取り、mi.traverse で更新可能なものだけ
+  書き換えて再レンダ。対応: メッシュ to_world（頂点/法線焼き直し。**法線は
+  positions 更新→update→normals 更新→update の 2 段**。同一 update だと Mesh が
+  法線を自動再計算して上書きする）/ 解析形状・envmap の to_world（**sphere は
+  明示 radius を to_world に焼き込むので scale(radius) を合成**）/ directional の
+  direction・irradiance（to_world の +z 列。他 2 列は観測量に無関係）/ bitmap
+  差し替え（クロップ再センタ。**データ内部表現はバリアント依存**〔llvm=リニア
+  Float32、cuda=生値+サンプル時変換〕なので使い捨て bitmap プラグインに
+  読ませて data テンソルを写す。to_uv は UV 空間の 3×3 AffineTransform3f）。
+  未対応の差分（キー集合変化・BSDF 変更等）は自動で作り直しにフォールバック。
+  検証: llvm/cuda とも static/tumble/absolute で作り直しパスと ≤1 LSB 一致。
+  実測: absolute 640×480/256spp が Mac llvm 3.3→1.5 s/frame、DGX cuda
+  2.2→1.35 s/frame（以後は GPU レンダ自体が支配的）。
+- **`--jobs N`（GUI: 並列プロセス数）**: フレーム範囲を N 分割してサブプロセス
+  並列。tumble はチャンク先頭まで決定論的に姿勢を前進させるので直列と
+  ±1LSB（Mitsuba 固有の揺らぎ）以内で一致。**多フレーム × CPU(llvm) 向け**。
+  DGX cuda では永続シーン後は GPU 律速のため効果薄、少フレームでは
+  プロセス起動 ~10s が勝って逆効果。チャンク子プロセスは
+  `relative_motion.py --args-file <json>`（解決済み Namespace を JSON 渡し）。
+- **absolute の地球は UV 球メッシュが既定**（`_uv_sphere_obj`、512×256 分割・
+  解析 sphere と同一 UV 規約、`--earth-analytic-sphere` で従来へ）: 解析
+  sphere の to_world はスカラー状態のため毎フレーム更新が Dr.Jit カーネルへの
+  リテラル焼き込み→全再コンパイル（cuda 実測 ~2.7 s/frame）を誘発する。
+  メッシュなら PersistentScene の頂点配列更新に乗り再コンパイルなし。解析
+  sphere との画差は max 6 LSB / 平均 0.2 LSB 以下（テッセレーション+法線補間分）。
+- **クロップ再センタのスパイク対策**: サブタイル JPEG デコードをスレッド並列
+  （PIL は C 層で GIL を離す）、crop PNG は compress_level=1（ロスレス維持）、
+  縮小は BOX（LANCZOS は 12000px 級で数秒）。スパイク 9→2.8 s（~14 フレームに
+  1 回）。`MRENDER_TIMING=1` で工程別タイマー（env/state / dict / pscene 内訳
+  diff/apply/render / write）が stderr に出る。
+  最終実測（absolute 640×480 cuda）: 定常 **0.25 s/frame**（元 2.2 の ~9 倍）、
+  20 フレーム通し 38→19.5 s、1024spp でも 1.5 s/frame。
+
+### 実行（relative: 2 機の相対配置 + 絶対軌道モード）
 
 `relative` verb (`relative_motion.py`) も専用 CLI フラグを持つ（`--mode`, `--rel-position`, `--rel-quat`, `--rel-csv`, `--frames`, `--wx` など）。
 
@@ -153,7 +192,95 @@ python mrender.py relative --config presets/relative_static.yaml
 python relative_motion.py --frames 30 --rel-position 1.5 0 0
 python relative_motion.py --mode csv --rel-csv input/rel_state_hcw.csv --frames 60
 python relative_motion.py --mode tumble --rel-position 1.5 0 0 --wx 0.3 --wz 1.0
+
+# absolute モード: 絶対軌道 2 本 → 相対状態 + フル物理環境を導出
+python mrender.py relative --config presets/relative_ykwn_absolute.yaml
 ```
+
+**mode=absolute（`AbsoluteOrbitContext`）**: chief/deputy の絶対軌道
+（`--chief-oe/--deputy-oe` = [a_km, e, i_deg, Ω_deg, ω_deg, M0_deg]、または
+`--chief-orbit-csv/--deputy-orbit-csv` = CsvEphemeris スキーマ [rad]）を伝播し、
+chief の RTN(LVLH) に落として相対状態を作る（シーン = chief 中心 RTN [km]、
+x=R, y=T, z=N。camera_* もこの回転系で指定）。環境は `--epoch-utc` 基準の実時刻で
+毎フレーム更新: 太陽方向 = VSOP87（groundobs の `sun_position_eci_km` を共用）、
+食 = yoshimulib `shadow()` の ν を照度に乗算、地球姿勢 = GMST + フル 3 軸
+`orientation`（`create_earth_backdrop(orientation=...)`。直下点が地上軌跡どおりに
+動き、可視域クロップを毎フレーム再計算 = フレームあたり数百 ms のタイル
+デコードが乗る）、星空 envmap = to_world で ECI 固定（恒星がシーンの回転に
+伴い流れる）。`sun_direction / earth_direction / earth_altitude_km /
+earth_rotation_deg` は absolute では無視（軌道から自動計算）。deputy 姿勢は
+`--deputy-attitude`: tumble（ECI 系トルクフリー伝播。rel_quat は t=0 の RTN
+相対初期姿勢）/ lvlh（deputy 自身の RTN + rel_quat 固定オフセット）/
+csv（deputy 軌道 CSV の q1..q4 = ECI→Body）。ライブプレビューも
+live_worker が同じ `AbsoluteOrbitContext` を共用して対応済み。
+
+### 実行（groundobs: 地上望遠鏡からの光学観測）
+
+`groundobs` verb (`ground_observation.py`) は地上局 (lat/lon/alt) から軌道上物体を
+光学望遠鏡で観測したときの**見かけ等級ライトカーブ** (observation.csv) と
+**望遠鏡センサ像**（小物体=シーイング円盤の点像、大物体=分解像。同一パイプライン）
+を出力する。専用 CLI フラグを持つ（`verb_parsers.build_groundobs_parser`、YAML 混在可）。
+
+```bash
+# LEO 大型物体（Hubble 13.2 m）の天頂パス: 分解像 + タンブル光度変調
+python mrender.py groundobs --config presets/groundobs_hubble.yaml
+
+# GEO 小物体（1 m 球）: 点像 + CCD ノイズ（~13 mag）
+python mrender.py groundobs --config presets/groundobs_geo_point.yaml
+
+# GEO サーベイ: 恒星時追尾・広視野・恒星背景・物体ストリーク（SSA 模擬画像）
+python mrender.py groundobs --config presets/groundobs_geo_survey.yaml
+
+# TLE 入力（SGP4 伝播。epoch 未指定時は TLE エポックを t=0 に採用）
+python mrender.py groundobs --config presets/groundobs_hubble.yaml   # に --tle を足すか
+python ground_observation.py --tle input/iss_sample.tle --frames 10
+```
+
+物理モデルの要点:
+- **地球自転あり**: 観測地は WGS-84 ECEF → GMST で ECI 回転。UTC エポック
+  (`epoch_utc`) 基準の実時刻で、太陽位置は yoshimulib VSOP87
+  （`sun_moon.ephemeris.sun_lon_lat_r` を直接使用。`ephemeris.sun()` 本体は
+  `au2km(sun_au, const)` の引数バグで TypeError になるため未使用）
+- **絶対測光**: 太陽 directional emitter に太陽定数 S0 [W/m²] を与え、リニア
+  レンダ画像の立体角積分で開口面照度 E → `m = −26.74 − 2.5·log10(E/S0)`。
+  ランバート球の解析解と 0.1%（0.001 mag）一致を検証済み
+- **本影/半影**: yoshimulib `shadow()` の照射率 ν をそのまま太陽照度に乗算
+- **大気**: 減光 k·X（平面平行 airmass）+ シーイング（ガウス PSF、FWHM 指定）
+  + 屈折（Sæmundsson 式。airmass・可視判定は視仰角 el_app で評価、
+  `--no-refraction` で無効化）
+- **大気揺らぎ**（`--turbulence`）: ガウスシーイングの代わりに Kolmogorov
+  位相スクリーン（FFT 法 + 3 レベル・サブハーモニクス、von Kármán 外部スケール
+  L0）から瞬時 PSF = |FFT{P·e^{iφ}}|² を生成して畳み込む。スペックル +
+  フレーム間の像揺れ（tip-tilt）+ 露光平均（サブ露光数 = exposure_s/τ0、
+  `--turbulence-max-screens` 上限）を物理再現し、長露光ではシーイング円盤に
+  収束する。r0 は `seeing_arcsec` から換算（FWHM = 0.98λ/r0）、カーネル総和 1
+  正規化で測光値はガウス経路とビット一致。短露光（≲0.1 s）の分解像形状推定
+  向け（例 `presets/groundobs_hubble_turbulence.yaml`）。検証は
+  `tools/groundobs_validation/turbulence_validation.py`（構造関数 ±10%・
+  長露光 FWHM 誤差 4%・flux 保存を確認済み）
+- **軌道入力 3 系統**: `--tle`（SGP4、要 `pip install sgp4`。TEME≈ECI 近似、
+  epoch 未指定時は TLE エポック採用）> `--orbit-csv` > ケプラー要素
+- **恒星背景**（`--show-stars`）: Hipparcos npz（`assets/hipparcos.npz`、
+  SatCap 由来、固有運動込み 118k 星）を物体レンダと同一のカメラ基底で投影。
+  Mitsuba look_at の画像座標系は実測で確定済み（列+ = f×up、行+ = −up。
+  `camera_basis` / `project_to_grid`）
+- **追尾モード**（`--tracking-mode`）: target=物体追尾（恒星が露光中に
+  トレイルを引く）/ sidereal=恒星時追尾（恒星は点像、物体が shift-and-add で
+  ストリーク化）。トレイル/ストリーク長は `--exposure-s` で決まる
+- **float32 対策(重要)**: カメラは真レンジではなく代理距離
+  d_r = min(range, 1000×バウンディング半径) に置く。真距離だと GEO で
+  レイ交差の判別式が桁落ちする。directional 光源のみなので結果は d_r に不変
+- `--start-overhead` で Ω(RAAN)・M₀ を自動調整し t=0 に天頂パスを作れる（デモ用）
+- センサノイズ（`--sensor-noise`）: 口径・QE・露光から光電子数 → ショット +
+  読み出しノイズ + 夜空背景 [mag/arcsec²]（SatCap の CCD 式を物理単位で移植）。
+  表示 PNG は背景中央値を引き 8σ フロアでストレッチ（実データは *_linear.npy）。
+  ノイズ OFF でもモノクロ検出器を模すなら `--monochrome`（Rec.709 輝度、
+  *_linear.npy も 2D になる。sensor-noise ON は常にモノクロなので不要）
+- **ライブプレビュー対応**: `build_context` + `render_observation_frame` を
+  live_worker が共用し、処理済み画像を `FrameBuild.image01` で返す特殊経路
+  （worker の mi.render はスキップ）。カメラは観測幾何から決まるため
+  ビューポートのカメラ操作は無効（フロントの `LIVE_STATIC_CAMERA_VERBS`）。
+  タイムラインスクラブ・フォーム変更再レンダは他 verb と同様
 
 ### 実行（On-Orbit Servicing 近接撮像シナリオ）
 
@@ -169,7 +296,28 @@ python mrender.py relative --config presets/oos_hubble.yaml --frames 3 --samples
 relative verb のフォトリアル環境オプション（`relative_motion.py`）:
 `--hide-chief`（カメラ=機載視点で chief 非描画）/ `--show-earth` +
 `--earth-direction --earth-altitude-km --earth-texture --earth-rotation-deg`
-（km 単位シーンに地球球体を背景配置、earthshine の照り返しはパストレで自動）/
+（km 単位シーンに地球球体を背景配置、earthshine の照り返しはパストレで自動）。
+**地球の可視域クロップ（既定 ON）**: LEO では地平線キャップ（400 km で中心角
+~20°）しか見えないため、chief 直下点まわりのキャップ + 余白だけを高解像度
+ソースから切り出し、球の追加自転 + bitmap `to_uv` でクロップ範囲に
+再マップする（見た目の地理は不変・実効解像度のみ向上。低解像度全球貼りとの
+UV 整合はゴールデン検証済みで最大 1 LSB）。ソースは `--earth-highres-texture`
+（既定 `assets/textures/earth_day_500m` = NASA BMNG 500 m/px 相当 86400×43200 を
+2700px 角 512 枚に分割したタイル群。`tools/prepare_bmng.py` で生成、~420 MB。
+可視域にかかるサブタイルだけデコードするので軽い）。無ければ
+`assets/textures/earth_day.jpg`（21600×10800）→ `earth_texture` の順に
+フォールバック。`--no-earth-crop` で従来動作、`--earth-crop-margin-deg`
+（既定 5°）で余白、`--earth-crop-max-dim`（既定 8192、500 m/px をフルに使う
+なら 12000）でクロップ上限。Mitsuba sphere の UV 規約は u=atan2(y,x)/2π,
+v=acos(z)/π（実測確定）。クロップはプロセス内キャッシュでライブプレビューの
+スクラブ中も再計算されない。
+**GIBS 実写モード**: `--earth-gibs` で NASA GIBS (WMTS/EPSG:4326) から可視域
+タイルだけをオンデマンド取得（既定レイヤ MODIS Terra TrueColor 250 m/px、
+実写日次・雲込み。`--earth-gibs-date YYYY-MM-DD`、未指定は昨日 UTC。
+`--earth-gibs-layer` で Aqua/VIIRS 等に変更可）。ズームレベルは可視域の必要
+画素数と crop_max_dim から自動選択、タイルは `runs/_gibs_cache/` に永続
+キャッシュ（rsync 対象外・GUI 一覧非表示）、ネットワーク失敗時は BMNG →
+earth_texture へ自動フォールバック。要出典表記: NASA GIBS。/
 `--sun-direction --sun-irradiance --sun-temperature`（黒体放射色）/
 `--starfield <exr>` + `--env-brightness` / `--camera-up` / `--max-depth`。
 
@@ -213,6 +361,7 @@ ffmpeg -framerate 30 -i runs/<RUN>/frames/frame_%04d.png \
 - **satellite_orbit.py** - render/lightcurve/preview のコア：軌道計算、シーン生成、レンダリングループ
 - **simple_rotation.py** - rotation のコア：オイラー回転運動方程式、クォータニオン姿勢、OBJパーツ別BSDF（軌道なし）
 - **relative_motion.py** - relative のコア：相対位置・相対姿勢で 2 機を配置（軌道なし、static/csv/tumble モード、地球背景・太陽・星空のフォトリアル環境オプション付き）
+- **ground_observation.py** - groundobs のコア：地上望遠鏡観測（WGS-84 地上局 + GMST + VSOP87 太陽 + TLE/SGP4 + 絶対測光 + 屈折 + シーイング PSF + 恒星背景 + 追尾モード + CCD ノイズ。build_context / render_observation_frame を live_worker と共用）
 - **gui_server.py / gui/index.html** - ブラウザ GUI（標準ライブラリ HTTP サーバー + 単一 HTML）。設定フォーム→YAML 生成→verb サブプロセス起動→進捗表示
 - **verbs/** - mrender サブコマンドのシム
 - **scene_common.py** - relative/rotation 共有のシーン部品・姿勢伝播（propagate_attitude / create_axes / create_satellite / split_obj_by_parts〔(path,mtime) キャッシュ内蔵〕/ load_model_with_parts）。**唯一の実装**で、両 verb は再エクスポート

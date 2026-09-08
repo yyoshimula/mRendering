@@ -1,3 +1,5 @@
 mitsuba>=3.7.0
 numpy>=1.24.0
 pyyaml>=6.0
+sgp4>=2.21
+scipy>=1.10

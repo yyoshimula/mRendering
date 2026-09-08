@@ -93,7 +93,7 @@ SCALAR = RM.SCALAR
 #   （光度曲線 CSV はバッチ実行でのみ計算する）。onboard は GUI 側 defaults の
 #   view_mode=satellite が fields に載ってくるだけで、経路は render と同じ。
 ORBIT_VERBS = ('render', 'preview', 'onboard', 'lightcurve')
-SUPPORTED_VERBS = ('relative', 'rotation') + ORBIT_VERBS
+SUPPORTED_VERBS = ('relative', 'rotation', 'groundobs') + ORBIT_VERBS
 
 # refine（高品質再レンダ）の解像度上限
 REFINE_MAX_W = 1280
@@ -426,6 +426,39 @@ def load_csv_cached(path: str):
     return hit
 
 
+# mode=absolute の軌道コンテキスト（CSV ロード・エポック解析を含むので
+# 軌道系フィールドをキーにキャッシュ。フォームのカメラ・材質変更では作り直さない）
+_ABS_CACHE: Dict[tuple, Any] = {}
+
+
+def _mtime_or_zero(path) -> float:
+    try:
+        return os.path.getmtime(str(path)) if path else 0.0
+    except OSError:
+        return 0.0
+
+
+def absolute_context(args: argparse.Namespace):
+    """relative mode=absolute の AbsoluteOrbitContext をキャッシュ付きで返す。"""
+    key = (
+        str(args.epoch_utc),
+        tuple(float(v) for v in (args.chief_oe or [])),
+        tuple(float(v) for v in args.deputy_oe) if getattr(args, 'deputy_oe', None) else None,
+        str(getattr(args, 'chief_orbit_csv', None) or ''),
+        _mtime_or_zero(getattr(args, 'chief_orbit_csv', None)),
+        str(getattr(args, 'deputy_orbit_csv', None) or ''),
+        _mtime_or_zero(getattr(args, 'deputy_orbit_csv', None)),
+        str(getattr(args, 'deputy_attitude', 'tumble')),
+    )
+    hit = _ABS_CACHE.get(key)
+    if hit is None:
+        hit = RM.AbsoluteOrbitContext(args)
+        _ABS_CACHE[key] = hit
+        if len(_ABS_CACHE) > 4:
+            _ABS_CACHE.pop(next(iter(_ABS_CACHE)))
+    return hit
+
+
 def attitude_trajectory(verb: str, args: argparse.Namespace, q0: np.ndarray,
                         dt: float, n_frames: int) -> List[np.ndarray]:
     """全フレームの姿勢クォータニオン列を事前計算してキャッシュする。
@@ -484,6 +517,19 @@ def relative_state_at(args: argparse.Namespace, frame: int) -> Tuple[np.ndarray,
     if args.mode == 'tumble':
         traj = attitude_trajectory('relative', args, rel_q_init, dt, n_frames)
         return rel_pos, traj[frame], t, len(traj)
+    if args.mode == 'absolute':
+        # バッチ (_run) の absolute 分岐と同じ計算（AbsoluteOrbitContext を共有）。
+        # tumble 姿勢は ECI 系で伝播した軌跡をフレームスクラブ用にキャッシュ
+        ctx = absolute_context(args)
+        rel_pos, a_i2rtn, _r_c, _v_c = ctx.relative_state(t)
+        if ctx.deputy_attitude == 'tumble':
+            q0 = ctx.initial_tumble_q_eci(start_t, rel_q_init)
+            traj = attitude_trajectory('relative_abs', args, q0, dt, n_frames)
+            a_eci2body = ctx.deputy_attitude_dcm(t, a_i2rtn, rel_q_init, traj[frame])
+        else:
+            a_eci2body = ctx.deputy_attitude_dcm(t, a_i2rtn, rel_q_init, None)
+        rel_q = ctx.rel_quat_scene(a_eci2body, a_i2rtn)
+        return rel_pos, rel_q, t, n_frames
     return rel_pos, rel_q_init, t, n_frames
 
 
@@ -511,14 +557,33 @@ def build_scene_dict(args: argparse.Namespace, frame: int,
 
     rel_pos, rel_q, time_s, traj_frames = relative_state_at(args, frame)
 
-    # deputy の慣性位置・姿勢はバッチ (_run) と同じ共有ヘルパーで合成する
-    # （規約・数値検証は relative_motion.compose_deputy_state の docstring 参照）
-    deputy_pos_inertial, deputy_q_inertial = RM.compose_deputy_state(
-        chief_pos, chief_q, rel_pos, rel_q)
+    if args.mode == 'absolute':
+        # シーン = chief RTN。rel_pos/rel_q は既に RTN 基準（バッチと同じ）
+        deputy_pos_inertial, deputy_q_inertial = rel_pos, rel_q
+    else:
+        # deputy の慣性位置・姿勢はバッチ (_run) と同じ共有ヘルパーで合成する
+        # （規約・数値検証は relative_motion.compose_deputy_state の docstring 参照）
+        deputy_pos_inertial, deputy_q_inertial = RM.compose_deputy_state(
+            chief_pos, chief_q, rel_pos, rel_q)
 
     deputy_xform = RM.make_body_transform(deputy_pos_inertial, deputy_q_inertial)
     # 太陽色・環境光・地球背景もバッチ (_run) と同じ共有ヘルパーで組む
-    sun_rgb, env_dict, earth_dict = RM.build_environment(args, chief_pos)
+    sun_direction = args.sun_direction
+    if args.mode == 'absolute':
+        # 時変環境（バッチの absolute 分岐と同一計算）: 太陽方向 (VSOP87)・
+        # 食 ν・地球姿勢 (GMST + 直下点クロップ)・星空 ECI 固定
+        ctx = absolute_context(args)
+        _rp, a_i2rtn, r_c, _vc = ctx.relative_state(time_s)
+        env_args = argparse.Namespace(**vars(args))
+        env_args.show_earth = False
+        sun_rgb, env_dict, _ = RM.build_environment(env_args, chief_pos)
+        nu, sun_dir_scene, _e2s, earth_dict = ctx.environment_at(
+            time_s, r_c, a_i2rtn, args)
+        sun_direction = (-sun_dir_scene).tolist()
+        sun_rgb = [c * nu for c in sun_rgb]
+        env_dict = RM.AbsoluteOrbitContext.rotate_env_dict(env_dict, a_i2rtn)
+    else:
+        sun_rgb, env_dict, earth_dict = RM.build_environment(args, chief_pos)
 
     scene_dict = RM.build_scene(
         chief_xform, deputy_xform,
@@ -533,7 +598,7 @@ def build_scene_dict(args: argparse.Namespace, frame: int,
         show_body_axes=bool(args.show_body_axes),
         camera_up=args.camera_up,
         max_depth=int(args.max_depth),
-        sun_direction=args.sun_direction,
+        sun_direction=sun_direction,
         sun_rgb=sun_rgb,
         env_dict=env_dict,
         earth_dict=earth_dict,
@@ -563,6 +628,10 @@ class FrameBuild(NamedTuple):
     time_s: float
     tonemap: Optional[Tuple[float, float]]
     timings: Dict[str, float]
+    # groundobs 用の特殊経路: verb 側で処理済みの表示用 [0,1] 画像。
+    # これが載っていると worker は mi.load_dict / mi.render をスキップし、
+    # この画像をそのまま PNG 化する（センサ後処理を含む画のため）。
+    image01: Optional[np.ndarray] = None
 
 
 def _vec(value: Any, fallback: Sequence[float]) -> List[float]:
@@ -645,6 +714,81 @@ def build_rotation_frame(fields: Dict[str, Any], frame: int,
     }
     return FrameBuild(scene_dict, n_frames, camera, frame * dt, None,
                       {'build': (time.perf_counter() - t0) * 1000.0})
+
+
+# ---------------------------------------------------------------------------
+# groundobs verb（ground_observation の再利用。レンダ済み画像を返す特殊経路）
+# ---------------------------------------------------------------------------
+# groundobs の出力は「Mitsuba レンダ → センサ格子再標本化 → PSF → ノイズ →
+# ストレッチ」の後処理込みなので、scene_dict を返す通常経路には乗らない。
+# render_observation_frame() の結果画像を FrameBuild.image01 で返し、
+# worker 側のレンダをスキップさせる。カメラは観測幾何から決まるため
+# ビューポートのカメラ操作は対象外（フロント側で無効化している）。
+_GO_META: Optional[Dict[str, Tuple[Any, Any, Any]]] = None
+_GO_CTX_CACHE: Dict[str, tuple] = {}
+_GO_CTX_ORDER: List[str] = []
+_GO_LOCK = threading.Lock()
+_GO_CTX_MAX = 4
+
+
+def groundobs_mod():
+    """ground_observation を遅延 import して返す。"""
+    with _MOD_LOCK:
+        mod = _MODS.get('groundobs')
+        if mod is None:
+            import ground_observation as GO  # noqa: N806
+            _MODS['groundobs'] = mod = GO
+        return mod
+
+
+def groundobs_args(fields: Optional[Dict[str, Any]]) -> argparse.Namespace:
+    """fields を ground_observation の argparse dest 空間の Namespace にする。"""
+    global _GO_META
+    GO = groundobs_mod()  # noqa: N806
+    parser = GO.build_parser()
+    if _GO_META is None:
+        _GO_META = _action_meta(parser)
+    return apply_fields(parser.parse_args([]), fields, _GO_META)
+
+
+def groundobs_setup(fields: Optional[Dict[str, Any]]) -> tuple:
+    """build_context（tumble 軌跡・TLE 読み込み等の前計算）を fields ハッシュで
+    キャッシュする。返り値は (args, ctx)。"""
+    key = _fields_key('groundobs', fields)
+    with _GO_LOCK:
+        hit = _GO_CTX_CACHE.get(key)
+    if hit is not None:
+        return hit
+    GO = groundobs_mod()  # noqa: N806
+    args = groundobs_args(fields)
+    ctx = GO.build_context(args)
+    result = (args, ctx)
+    with _GO_LOCK:
+        _GO_CTX_CACHE[key] = result
+        _GO_CTX_ORDER.append(key)
+        while len(_GO_CTX_ORDER) > _GO_CTX_MAX:
+            _GO_CTX_CACHE.pop(_GO_CTX_ORDER.pop(0), None)
+    return result
+
+
+def build_groundobs_frame(fields: Dict[str, Any], frame: int,
+                          width: int, height: int, samples: int) -> FrameBuild:
+    """groundobs: バッチと同一の render_observation_frame() を呼ぶ。
+
+    width / height は無視する（画像サイズはセンサ設定 sensor_px で決まる）。
+    samples だけ品質オーバーライドとして渡す。refine 時の spp がフォームの
+    samples と同じなら、バッチ出力とピクセル一致する
+    （ノイズ乱数は noise_seed + frame で決定的）。
+    """
+    t0 = time.perf_counter()
+    GO = groundobs_mod()  # noqa: N806
+    args, ctx = groundobs_setup(fields)
+    n_frames = max(1, int(args.frames or 1))
+    frame = max(0, min(int(frame), n_frames - 1))
+    res = GO.render_observation_frame(args, ctx, frame, samples=samples)
+    return FrameBuild({}, n_frames, None, res.time_s, None,
+                      {'build': (time.perf_counter() - t0) * 1000.0},
+                      image01=res.png01)
 
 
 # ---------------------------------------------------------------------------
@@ -939,6 +1083,8 @@ def build_frame(verb: str, fields: Dict[str, Any], frame: int,
         return build_relative_frame(fields, frame, width, height, samples)
     if verb == 'rotation':
         return build_rotation_frame(fields, frame, width, height, samples)
+    if verb == 'groundobs':
+        return build_groundobs_frame(fields, frame, width, height, samples)
     if verb in ORBIT_VERBS:
         return build_orbit_frame(verb, fields, frame, width, height, samples, tmp_dir)
     raise ValueError(f'ライブプレビュー未対応 verb: {verb}')
@@ -986,6 +1132,9 @@ INTERACTIVE_FIELD_OVERRIDES: Dict[str, Dict[str, Any]] = {
         'max_depth': INTERACTIVE_INTEGRATOR['max_depth'],
     },
     'rotation': {},
+    # groundobs: PSF 畳み込みコストが supersample² で効くので 1 に落とす
+    #（integrator 差し替えと解像度分割は image01 経路では効かない）。
+    'groundobs': {'supersample': 1},
 }
 
 
@@ -1024,6 +1173,14 @@ def interactive_resolution(width: int, height: int) -> Tuple[int, int]:
 def frame_resolution(verb: str, fields: Dict[str, Any]) -> Tuple[int, int]:
     """fields から出力解像度（フル品質時）を取り出す。"""
     flat = flatten_fields(fields)
+    if verb == 'groundobs':
+        # 画像サイズはセンサ設定で決まる（width/height フィールドは無い）
+        try:
+            px = int(flat.get('sensor_px') or 256)
+        except (TypeError, ValueError):
+            px = 256
+        px = max(MIN_RENDER_PX, px)
+        return px, px
     if verb in ORBIT_VERBS:
         default_w, default_h = 1920, 1080
     else:
@@ -1338,6 +1495,7 @@ class LiveWorker:
             fast_path = (cam is not None and entry is not None
                          and entry['key'] == cache_key and entry['fov'] == fov_key)
 
+            pre_img = None   # groundobs の処理済み画像（リビルド経路でのみ載る）
             if fast_path:
                 origin, target, up = cam
                 t_cam = time.perf_counter()
@@ -1360,21 +1518,28 @@ class LiveWorker:
                 build = build_frame(verb, fields, desired['frame'],
                                     width, height, samples, Path(self._tmp_dir))
                 stages.update(build.timings)
-                # プレビューでは envmap / 大判テクスチャを縮小して応答性を優先。
-                # refine では必ず原寸（バッチ出力とのピクセル一致はここで担保する）。
-                t_pre = time.perf_counter()
-                scene_dict = build.scene_dict
-                if simplified:
-                    scene_dict = simplify_scene(scene_dict)
-                scene_dict = preload_bitmaps(
-                    scene_dict,
-                    0 if is_refine else PREVIEW_ENV_MAX_WIDTH,
-                    0 if is_refine else PREVIEW_TEX_MAX_WIDTH)
-                t_load = time.perf_counter()
-                scene = mi.load_dict(scene_dict)
-                t_render = time.perf_counter()
-                image = mi.render(scene)
-                t_write = time.perf_counter()
+                pre_img = build.image01
+                if pre_img is not None:
+                    # groundobs 経路: verb 側で処理済み画像を受け取った。
+                    # worker のレンダはスキップ（センサ後処理込みの画のため）。
+                    t_pre = t_load = t_render = t_write = time.perf_counter()
+                    image = None
+                else:
+                    # プレビューでは envmap / 大判テクスチャを縮小して応答性を優先。
+                    # refine では必ず原寸（バッチ出力とのピクセル一致はここで担保する）。
+                    t_pre = time.perf_counter()
+                    scene_dict = build.scene_dict
+                    if simplified:
+                        scene_dict = simplify_scene(scene_dict)
+                    scene_dict = preload_bitmaps(
+                        scene_dict,
+                        0 if is_refine else PREVIEW_ENV_MAX_WIDTH,
+                        0 if is_refine else PREVIEW_TEX_MAX_WIDTH)
+                    t_load = time.perf_counter()
+                    scene = mi.load_dict(scene_dict)
+                    t_render = time.perf_counter()
+                    image = mi.render(scene)
+                    t_write = time.perf_counter()
                 tonemap = build.tonemap
                 traj_frames = build.traj_frames
                 time_s = build.time_s
@@ -1395,7 +1560,15 @@ class LiveWorker:
                         'camera': build.camera,
                     }
 
-            if tonemap is not None:
+            if pre_img is not None:
+                # groundobs: [0,1] ストレッチ済み画像をそのまま 8bit 化
+                #（ground_observation.save_png と同一経路 = バッチとピクセル一致）。
+                bmp = mi.Bitmap(np.ascontiguousarray(
+                    pre_img.astype(np.float32))).convert(
+                    mi.Bitmap.PixelFormat.RGB, mi.Struct.Type.UInt8,
+                    srgb_gamma=False)
+                bmp.write(self._tmp_png)
+            elif tonemap is not None:
                 # render 系: satellite_orbit.render_frame と同一のトーンマップ経路。
                 # apply_tonemap の出力は既にガンマ済みなので srgb_gamma=False で
                 # そのまま 8bit 量子化する（二重ガンマの防止）。

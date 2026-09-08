@@ -1,0 +1,90 @@
+# 地上大型望遠鏡による LEO 大型物体（Hubble, 13.2 m）の天頂パス観測
+#
+# シチュエーション:
+#   夏の宵（JST 20:00、観測地は薄明終了後・衛星は日照中）に、高度 540 km を
+#   通過する Hubble 級の物体を 0.1"/px の大型望遠鏡で追尾撮像する。
+#   天頂通過時の視直径 ~5" はシーイング 0.7" より十分大きく、形状が分解される。
+#   パス後半はレンジ増加とともに縮んで点像に近づき、observation.csv には
+#   見かけ等級（大気減光込み）のライトカーブが出る。
+#
+# 使用:
+#   python mrender.py groundobs --config presets/groundobs_hubble.yaml
+#   # 低品質プレビュー:
+#   python mrender.py groundobs --config presets/groundobs_hubble.yaml --frames 5 --samples 32
+#
+# キー名は ground_observation.py の argparse dest と一致させること
+# （セクション名は整理用で、フラット化されて読み込まれる）。
+
+time:
+  epoch_utc: "2026-08-19T11:00:00"   # = JST 20:00（薄明終了直後の可視パス帯）
+  frames: 60
+  duration_sec: 120                  # dt = 2 s、天頂から地平線方向へ抜けるパス
+  start_time: 0.0
+
+site:
+  site_lat: 35.0                     # 日本の中緯度サイト
+  site_lon: 135.0
+  site_alt_m: 600.0
+  min_elevation_deg: 5.0
+
+orbit:
+  altitude_km: 540.0                 # HST 軌道高度相当
+  eccentricity: 0.0
+  inclination_deg: 51.6
+  raan_deg: 0.0
+  arg_periapsis_deg: 0.0
+  start_overhead: true               # t=0 で観測地天頂に最接近するよう M₀ を調整
+
+attitude:
+  attitude_mode: tumble              # 低速タンブル（ライトカーブに変調が乗る）
+  Ix: 36000.0
+  Iy: 87000.0
+  Iz: 93000.0
+  wx: 0.02
+  wy: 0.005
+  wz: 0.03
+
+model:
+  model_path: models/hubble.obj
+  model_scale: 0.001                 # モデル単位 m → シーン単位 km
+  model_parts:
+    hbltel_1:              # 本体パネル・ハンドレール・太陽電池パドル
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_1.png}
+      metallic: 0.35
+      roughness: 0.35
+    hbltel_2:              # 開口部・望遠鏡バッフル（黒）・光学系
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_2.png}
+      metallic: 0.1
+      roughness: 0.5
+    hbltel_3:              # アルミ蒸着カプトン MLI（皺のある金色フォイル）
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_3.png}
+      metallic: 0.85
+      roughness: 0.28
+    hbltel_4:              # 銀色 MLI ブランケット（前胴周り）
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_4.png}
+      metallic: 0.7
+      roughness: 0.35
+    hbltel_wfc_1:          # WFC ラジエータ
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_w.png}
+      metallic: 0.2
+      roughness: 0.45
+
+telescope:
+  pixel_scale_arcsec: 0.1            # 大型望遠鏡クラスのプレートスケール
+  sensor_px: 256                     # 視野 25.6"
+  supersample: 3
+  seeing_arcsec: 0.7                 # 良シーイングサイト
+  extinction_k: 0.15
+  samples: 128
+  max_depth: 6
+
+rendering:
+  stretch: asinh
+  stretch_percentile: 99.9
+  make_video: true
+  video_fps: 15

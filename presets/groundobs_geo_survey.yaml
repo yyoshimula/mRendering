@@ -1,0 +1,65 @@
+# GEO サーベイ観測（恒星時追尾・広視野・恒星背景・ストリーク検出）
+#
+# シチュエーション:
+#   深夜に広視野サーベイ望遠鏡（4"/px × 1024px = 視野 68'）で GEO 帯を
+#   恒星時追尾で撮像する。恒星は点像で写り、GEO 物体（半径 1 m の球）は
+#   露光 2 s の間に対恒星 ~15"/s 東進する分だけストリークになる。
+#   SSA のストリーク検出アルゴリズム検証用の模擬画像を想定。
+#
+# 使用:
+#   python mrender.py groundobs --config presets/groundobs_geo_survey.yaml
+
+time:
+  epoch_utc: "2026-08-19T15:00:00"   # = JST 24:00（深夜、GEO は食外で日照）
+  frames: 5
+  fps: 0.5                           # dt = 2 s（露光と同じ = 連続コマ）
+
+site:
+  site_lat: 35.0
+  site_lon: 135.0
+  site_alt_m: 600.0
+  min_elevation_deg: 10.0
+
+orbit:
+  altitude_km: 35786.0
+  eccentricity: 0.0
+  inclination_deg: 0.0
+  start_overhead: true
+
+attitude:
+  attitude_mode: nadir
+
+model:
+  sphere_radius_m: 1.0
+  sphere_albedo: 0.3
+
+observation:
+  tracking_mode: sidereal            # 恒星時追尾: 恒星=点像 / 物体=ストリーク
+  show_stars: true
+  star_catalog: assets/hipparcos.npz
+  star_mag_limit: 9.0
+
+telescope:
+  pixel_scale_arcsec: 4.0            # 広視野サーベイのプレートスケール
+  sensor_px: 1024                    # 視野 68.3'
+  supersample: 2
+  seeing_arcsec: 3.0
+  extinction_k: 0.20
+  samples: 256
+  max_depth: 4
+
+sensor:
+  sensor_noise: true
+  aperture_m: 0.35
+  throughput: 0.7
+  quantum_efficiency: 0.8
+  exposure_s: 2.0                    # GEO ストリーク長 ≈ 30" ≈ 7.5 px
+  read_noise_e: 3.0
+  gain_e_per_adu: 1.0
+  full_well_e: 60000.0
+  sky_mag_arcsec2: 21.0
+  noise_seed: 0
+
+rendering:
+  stretch: asinh
+  stretch_percentile: 99.7

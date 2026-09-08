@@ -48,6 +48,7 @@ import yaml
 
 from config_loader import _ARG_DEFAULTS, load_flat_yaml_config
 from verb_parsers import (
+    build_groundobs_parser,
     build_relative_parser,
     build_rotation_parser,
     parser_defaults,
@@ -75,6 +76,7 @@ MATERIAL_NAMES = ['', 'aluminum_brushed', 'aluminum_polished', 'gold', 'solar_pa
 # （rotation の camera_origin が [6,4,4] vs 実際の [3,2,2] 等）ので廃止した。
 RELATIVE_DEFAULTS: Dict[str, Any] = parser_defaults(build_relative_parser())
 ROTATION_DEFAULTS: Dict[str, Any] = parser_defaults(build_rotation_parser())
+GROUNDOBS_DEFAULTS: Dict[str, Any] = parser_defaults(build_groundobs_parser())
 
 
 def F(key: str, label: str, ftype: str, **kw) -> Dict[str, Any]:
@@ -95,7 +97,8 @@ COMMON_SECTIONS: List[Dict[str, Any]] = [
         F('start_time', '開始時刻 [s]', 'float'),
         F('start_frame', '開始フレーム', 'int', help='preview ではこのフレームだけ描画'),
         F('make_video', '完了後に mp4 作成', 'bool'),
-        F('video_fps', '動画 fps', 'float', optional=True),
+        F('video_fps', '動画再生 fps', 'float', optional=True,
+          help='mp4 の再生速度のみ（物理・時間軸には無関係）'),
     ]},
     {'title': '主物体（軌道・モデル）', 'fields': [
         F('primary_name', '名前', 'str'),
@@ -178,20 +181,44 @@ RELATIVE_SECTIONS: List[Dict[str, Any]] = [
         F('samples', 'サンプル数 (spp)', 'int'),
         F('width', '幅 [px]', 'int'),
         F('height', '高さ [px]', 'int'),
-        F('fps', 'fps（dt=1/fps）', 'float'),
+        F('fps', '時間刻み fps', 'float',
+          help='dt = 1/fps。時間 [s] 欄を指定中は無視される（dt = duration/frames）'),
         F('duration_sec', 'シミュレーション時間 [s]', 'float', optional=True,
           help='指定時 dt = duration/frames'),
         F('start_time', '開始時刻 [s]', 'float'),
         F('make_video', '完了後に mp4 作成', 'bool'),
-        F('video_fps', '動画 fps', 'float', optional=True),
+        F('video_fps', '動画再生 fps', 'float', optional=True,
+          help='mp4 の再生速度のみ（物理・時間軸には無関係）'),
+        F('jobs', '並列プロセス数', 'int',
+          help='フレーム範囲を N 分割して並列レンダ。GPU 実行 × 多フレームで'
+               'ほぼ線形にスケール（少フレームではプロセス起動が勝って逆効果）'),
     ]},
     {'title': 'モード・相対状態', 'fields': [
-        F('mode', 'モード', 'select', options=['static', 'csv', 'tumble'],
-          help='static=固定 / csv=時系列再生 / tumble=deputy タンブリング'),
+        F('mode', 'モード', 'select',
+          options=['static', 'csv', 'tumble', 'absolute'],
+          help='static=固定 / csv=時系列再生 / tumble=deputy タンブリング / '
+               'absolute=絶対軌道 2 本から相対状態+環境を導出'),
         F('rel_position', '相対位置 [km]（RTN）', 'vec3'),
-        F('rel_quat', '相対姿勢 [qx qy qz qw]', 'vec4'),
+        F('rel_quat', '相対姿勢 [qx qy qz qw]', 'vec4',
+          help='absolute+tumble では t=0 の RTN 相対初期姿勢'),
         F('rel_csv', '相対状態 CSV', 'file', kind='csv', optional=True,
           help='mode=csv 時必須（time_s,x,y,z,qx,qy,qz,qw）'),
+    ]},
+    {'title': '絶対軌道（mode=absolute）', 'fields': [
+        F('epoch_utc', 'エポック UTC', 'str',
+          help='ISO 8601。太陽位置 (VSOP87)・GMST (地球姿勢) の t=0 基準'),
+        F('chief_oe', 'chief 軌道要素', 'vec6',
+          help='[a_km, e, i°, Ω°, ω°, M0°]'),
+        F('deputy_oe', 'deputy 軌道要素', 'vec6', optional=True,
+          help='[a_km, e, i°, Ω°, ω°, M0°]（CSV 未指定なら必須）'),
+        F('chief_orbit_csv', 'chief 軌道 CSV', 'file', kind='csv', optional=True,
+          help='CsvEphemeris スキーマ（rad）。指定時は軌道要素より優先'),
+        F('deputy_orbit_csv', 'deputy 軌道 CSV', 'file', kind='csv', optional=True),
+        F('deputy_attitude', 'deputy 姿勢', 'select',
+          options=['tumble', 'lvlh', 'csv'],
+          help='tumble=ECI 系トルクフリー伝播 / lvlh=deputy RTN+rel_quat 固定 / '
+               'csv=軌道 CSV の q1..q4。太陽方向・地心方向・高度・地球回転は'
+               '軌道から自動計算（宇宙環境の該当欄は無視）'),
     ]},
     {'title': 'タンブル動力学（mode=tumble）', 'fields': [
         F('Ix', 'Ix [kg·m²]', 'float'),
@@ -229,6 +256,13 @@ RELATIVE_SECTIONS: List[Dict[str, Any]] = [
         F('earth_altitude_km', '高度 [km]', 'float'),
         F('earth_texture', '地球テクスチャ', 'file', kind='texture'),
         F('earth_rotation_deg', '地球テクスチャ回転 [deg]', 'float'),
+        F('earth_gibs', 'GIBS 実写画像（雲込み・要ネット）', 'bool',
+          help='NASA GIBS から可視域だけオンデマンド取得（MODIS 250 m/px、'
+               '実写日次。取得失敗時はローカルテクスチャへ自動フォールバック）'),
+        F('earth_gibs_date', 'GIBS 撮像日', 'str', optional=True,
+          help='YYYY-MM-DD（未指定は昨日 UTC。Terra は 2000-02-24〜今日）'),
+        F('earth_gibs_layer', 'GIBS レイヤ', 'str', optional=True,
+          help='例: VIIRS_SNPP_CorrectedReflectance_TrueColor'),
         F('sun_direction', '太陽光の進行方向', 'vec3'),
         F('sun_irradiance', '太陽強度', 'float', step=0.1),
         F('sun_temperature', '太陽色温度 [K]', 'float', optional=True,
@@ -249,7 +283,7 @@ ROTATION_SECTIONS: List[Dict[str, Any]] = [
         F('samples', 'サンプル数 (spp)', 'int'),
         F('width', '幅 [px]', 'int'),
         F('height', '高さ [px]', 'int'),
-        F('fps', 'fps', 'float'),
+        F('fps', '時間刻み fps', 'float', help='dt = 1/fps'),
     ]},
     {'title': 'モデル', 'fields': [
         F('model_path', '3Dモデル', 'file', kind='model', optional=True),
@@ -269,6 +303,102 @@ ROTATION_SECTIONS: List[Dict[str, Any]] = [
         F('camera_origin', 'カメラ位置', 'vec3'),
         F('camera_target', '注視点', 'vec3'),
         F('camera_fov', 'FOV [deg]', 'float'),
+    ]},
+]
+
+
+GROUNDOBS_SECTIONS: List[Dict[str, Any]] = [
+    {'title': '時間軸（UTC エポック）', 'fields': [
+        F('epoch_utc', 'エポック UTC (ISO 8601)', 'str',
+          help='t=0 の UTC 時刻。GMST・太陽位置の基準'),
+        F('frames', 'フレーム数', 'int'),
+        F('fps', '時間刻み fps', 'float',
+          help='dt = 1/fps。時間 [s] 欄を指定中は無視される（dt = duration/frames）'),
+        F('duration_sec', '総観測時間 [s]', 'float', optional=True,
+          help='指定時 dt = duration/frames'),
+        F('start_time', '開始オフセット [s]', 'float'),
+    ]},
+    {'title': '観測地（地上局）', 'fields': [
+        F('site_lat', '緯度 [deg]（北+）', 'float', step=0.0001),
+        F('site_lon', '経度 [deg]（東+）', 'float', step=0.0001),
+        F('site_alt_m', '標高 [m]', 'float'),
+        F('min_elevation_deg', '最低仰角 [deg]', 'float'),
+    ]},
+    {'title': '軌道', 'fields': [
+        F('tle', 'TLE ファイル', 'str', optional=True,
+          help='SGP4 伝播（TEME≈ECI 近似）。CSV・ケプラー要素より優先。'
+               'epoch 未指定時は TLE エポックを t=0 に採用'),
+        F('tle_name', 'TLE 衛星名（部分一致）', 'str', optional=True),
+        F('orbit_csv', '軌道 CSV (ephemeris)', 'file', kind='csv', optional=True,
+          help='指定時はケプラー要素より優先'),
+        F('altitude_km', '円軌道高度 [km]', 'float'),
+        F('semi_major_axis_km', '軌道長半径 a [km]', 'float', optional=True),
+        F('eccentricity', '離心率 e', 'float', step=0.001),
+        F('inclination_deg', '軌道傾斜角 i [deg]', 'float'),
+        F('raan_deg', 'RAAN Ω [deg]', 'float'),
+        F('arg_periapsis_deg', '近地点引数 ω [deg]', 'float'),
+        F('mean_anomaly_deg', '平均近点角 M₀ [deg]', 'float'),
+        F('start_overhead', 't=0 で天頂パスに整列', 'bool',
+          help='Ω と M₀ を自動調整（デモ・可視パス作成用）'),
+    ]},
+    {'title': '姿勢', 'fields': [
+        F('attitude_mode', '姿勢モード', 'select',
+          options=['nadir', 'sun_tracking', 'velocity_aligned', 'tumble']),
+        F('Ix', 'Ix [kg·m²]', 'float'),
+        F('Iy', 'Iy [kg·m²]', 'float'),
+        F('Iz', 'Iz [kg·m²]', 'float'),
+        F('wx', 'ωx [rad/s]', 'float', step=0.001),
+        F('wy', 'ωy [rad/s]', 'float', step=0.001),
+        F('wz', 'ωz [rad/s]', 'float', step=0.001),
+    ]},
+    {'title': 'ターゲット', 'fields': [
+        F('model_path', '3Dモデル', 'file', kind='model', optional=True,
+          help='未指定なら拡散球ターゲット'),
+        F('model_scale', 'モデル単位→km 倍率', 'float', step=0.0001,
+          help='m 単位モデルなら 0.001'),
+        F('model_parts', 'パーツ別 BSDF (YAML)', 'yaml', rows=8, optional=True),
+        F('model_bsdf', 'デフォルト BSDF (YAML)', 'yaml', rows=4, optional=True),
+        F('sphere_radius_m', '球半径 [m]', 'float', step=0.1),
+        F('sphere_albedo', '球アルベド', 'float', step=0.01),
+    ]},
+    {'title': '観測モード・恒星背景', 'fields': [
+        F('tracking_mode', '追尾モード', 'select', options=['target', 'sidereal'],
+          help='target=物体追尾（恒星が流れる）/ sidereal=恒星時追尾（物体がストリーク）'),
+        F('show_stars', '恒星背景を描画', 'bool'),
+        F('star_catalog', '恒星カタログ (npz)', 'str'),
+        F('star_mag_limit', '恒星の限界等級', 'float', step=0.5),
+        F('refraction', '大気屈折を適用', 'bool'),
+    ]},
+    {'title': '望遠鏡・大気', 'fields': [
+        F('pixel_scale_arcsec', 'ピクセルスケール ["/px]', 'float', step=0.01),
+        F('sensor_px', 'センサ一辺 [px]', 'int'),
+        F('supersample', '内部スーパーサンプル', 'int'),
+        F('seeing_arcsec', 'シーイング FWHM ["]', 'float', step=0.1),
+        F('extinction_k', '減光係数 k [mag/airmass]', 'float', step=0.01),
+        F('samples', 'サンプル数 (spp)', 'int'),
+        F('max_depth', '最大バウンス数', 'int'),
+        F('sun_temperature', '太陽色温度 [K]', 'float'),
+        F('sun_irradiance_wm2', '太陽定数 [W/m²]', 'float'),
+    ]},
+    {'title': 'センサノイズ (CCD)', 'fields': [
+        F('sensor_noise', 'CCD ノイズモデルを適用', 'bool'),
+        F('aperture_m', '口径 [m]', 'float', step=0.01),
+        F('throughput', 'スループット', 'float', step=0.01),
+        F('quantum_efficiency', 'QE', 'float', step=0.01),
+        F('exposure_s', '露光時間 [s]', 'float', step=0.001),
+        F('read_noise_e', '読み出しノイズ [e⁻]', 'float', step=0.1),
+        F('gain_e_per_adu', 'ゲイン [e⁻/ADU]', 'float', step=0.1),
+        F('full_well_e', 'フルウェル [e⁻]', 'float'),
+        F('sky_mag_arcsec2', '夜空輝度 [mag/arcsec²]', 'float', step=0.1),
+        F('noise_seed', 'ノイズシード', 'int'),
+    ]},
+    {'title': '出力', 'fields': [
+        F('stretch', 'ストレッチ', 'select', options=['asinh', 'linear', 'log']),
+        F('stretch_percentile', 'ストレッチ percentile', 'float', step=0.1),
+        F('save_linear', 'リニア画像 (.npy) も保存', 'bool'),
+        F('make_video', '完了後に mp4 作成', 'bool'),
+        F('video_fps', '動画再生 fps', 'float', optional=True,
+          help='mp4 の再生速度のみ（物理・時間軸には無関係）'),
     ]},
 ]
 
@@ -296,7 +426,7 @@ def missing_default_keys(sections: List[Dict[str, Any]],
 # 既定値を argparse から自動導出している verb。ここだけカバレッジを検査する
 # （render 系は config_loader._ARG_DEFAULTS 由来で、軌道要素など「未設定が
 #  既定」の項目を意図的に持たない）。
-_AUTO_DEFAULT_VERBS = ('relative', 'rotation')
+_AUTO_DEFAULT_VERBS = ('relative', 'rotation', 'groundobs')
 
 
 def _warn_schema_gaps() -> None:
@@ -347,6 +477,11 @@ def build_verb_schema() -> Dict[str, Any]:
             'desc': '軌道なし。オイラー回転運動方程式で単機を回す',
             'sections': ROTATION_SECTIONS, 'defaults': ROTATION_DEFAULTS,
         },
+        'groundobs': {
+            'label': 'groundobs（地上望遠鏡観測）',
+            'desc': '地上局からの見かけ等級ライトカーブ + 望遠鏡センサ像（点像〜分解像）',
+            'sections': GROUNDOBS_SECTIONS, 'defaults': GROUNDOBS_DEFAULTS,
+        },
     }
 
 
@@ -385,7 +520,7 @@ def flatten_simple_yaml(paths: List[Path]) -> Dict[str, Any]:
 
 def load_preset_flat(path: Path, verb: str) -> Dict[str, Any]:
     """プリセット YAML を GUI フォーム用のフラット辞書へ変換する。"""
-    if verb in ('relative', 'rotation'):
+    if verb in ('relative', 'rotation', 'groundobs'):
         return flatten_simple_yaml([path])
     from config_loader import load_yaml_config
     return load_yaml_config([str(path)])
@@ -1325,7 +1460,7 @@ class GuiHandler(BaseHTTPRequestHandler):
         elif route == '/api/render':
             verb = payload.get('verb')
             if verb not in ('render', 'preview', 'onboard', 'lightcurve',
-                            'relative', 'rotation'):
+                            'relative', 'rotation', 'groundobs'):
                 self._send_error_json(f'未対応 verb: {verb}')
                 return
             try:
