@@ -28,7 +28,7 @@ python mrender.py gui --port 8765 --no-browser
 **リモート実行（DGX Spark）**: 2 方式ある（詳細は
 [tools/dgx/README.md](tools/dgx/README.md)）。
 ① **GUI 内マシン選択（推奨）**: GUI を Mac で動かし、ヘッダーの「実行マシン」
-セレクタでジョブ・ライブプレビューごとに local / dgx を切替。リモート定義は
+セレクタでジョブ・ライブプレビューごとに local / リモート GPU を切替。リモート定義は
 `gui_hosts.json`（ssh ホスト名 / リポジトリ dir / MRENDER_VARIANT。自ホスト名と
 同名エントリは自動除外）。リモートジョブは YAML を scp → `ssh -tt` で実行し、
 runs/<run> を rsync でローカルへ自動ミラー（進捗・最新フレーム・成果物リンクは
@@ -156,13 +156,13 @@ null（既定）で物体の見かけサイズから自動決定する（既定 
 
 ```bash
 # mrender 経由（推奨、runs/ に自動配置）
-python mrender.py rotation --config presets/akatsuki.yaml
+python mrender.py rotation --config presets/rotation_hubble.yaml
 
 # スタンドアロン
-python simple_rotation.py --config presets/akatsuki.yaml
-python simple_rotation.py --config presets/akatsuki.yaml --frames 10 --samples 4
+python simple_rotation.py --config presets/rotation_hubble.yaml
+python simple_rotation.py --config presets/rotation_hubble.yaml --frames 10 --samples 4
 python simple_rotation.py --frames 30
-python simple_rotation.py --model-path models/akatsuki.obj --model-scale 0.1 --frames 10
+python simple_rotation.py --model-path models/hubble.obj --model-scale 0.1 --frames 10
 ```
 
 ### relative の高速化（永続シーン / フレーム並列）
@@ -218,7 +218,7 @@ python relative_motion.py --mode csv --rel-csv input/rel_state_hcw.csv --frames 
 python relative_motion.py --mode tumble --rel-position 1.5 0 0 --wx 0.3 --wz 1.0
 
 # absolute モード: 絶対軌道 2 本 → 相対状態 + フル物理環境を導出
-python mrender.py relative --config presets/relative_ykwn_absolute.yaml
+python mrender.py relative --config <absolute モードの YAML>   # 研究室内の例は internal/presets/
 ```
 
 **mode=absolute（`AbsoluteOrbitContext`）**: chief/deputy の絶対軌道

@@ -73,7 +73,7 @@ dgx は 1 人 1 アカウントで使う（共用アカウントは使わない�
 人ごとに別プロセス・別ポートで動くので、同時に使っても互いの設定やジョブは
 混ざらない。共有されるのは GPU だけ（誰かの長いバッチ中は他の人のプレビューも遅くなる）。
 
-1. **管理者（吉村）が用意するもの**: dgx のアカウント（`ssh root@dgx adduser --disabled-password <name>`）と、
+1. **管理者が用意するもの**: dgx のアカウント（`ssh root@dgx adduser --disabled-password <name>`）と、
    tailnet ACL の `ssh` ルール 1 行（`src` = 本人の Tailscale ログイン、`dst` = `tag:dgx`、
    `users` = 本人のアカウント名）。**ルールがあれば SSH 公開鍵の登録は不要**（Tailscale SSH が認証する）。
 2. **本人**: tailnet に参加した端末から `ssh <name>@<DGX の Tailscale IP>` で入れることを確認。
@@ -99,8 +99,9 @@ GUI ポートに加えて +1（ライブワーカー）と +101（方式①の�
 
 | アカウント | GUI ポート |
 |---|---|
-| yyoshimula | 8600 |
-| <name> | 8610 |
+| 管理者 | 8600 |
+| メンバー 1 人目 | 8610 |
+| メンバー 2 人目 | 8620 |
 
 `internal/`（非公開データ）は GitHub に無い。必要な人には Dropbox から別途渡す。
 
@@ -116,7 +117,7 @@ GUI ポートに加えて +1（ライブワーカー）と +101（方式①の�
 
 **pip の mitsuba wheel（3.9.1 時点）は aarch64 Linux 向けに存在し、
 `cuda_ad_rgb` 込み**なので通常は `setup_dgx.sh` だけで GPU レンダリングまで
-動く（dgx 実機で 2026-08-19 確認済み: cornell box 64spp 0.18s、
+動く（DGX Spark 実機で 2026-08-19 確認済み: cornell box 64spp 0.18s、
 oos_hubble 2 フレーム@32spp 全体 3.9s）。将来 wheel が壊れた場合や独自
 バリアントが要る場合のみ、以下でソースビルドする:
 

@@ -986,7 +986,8 @@ const SCENARIOS = {
   relative: {label: '相対軌道', desc: 'ターゲットと観測側の接近・周回・近接撮像', verb: 'relative'},
   ground: {label: '地上観測', desc: '地上の望遠鏡から見える像と明るさを確認', verb: 'groundobs'},
 };
-// 用途で分類する。relative_ykwn_absolute は計算法が絶対軌道でも用途は相対撮像。
+// 用途で分類する（計算法が絶対軌道でも用途が相対撮像なら relative）。
+// 配布に含めないプリセット（internal/presets/）は YAML 先頭の '# mrender-gui: [...]' 行で自己記述する。
 // earth_beauty は差分プリセットなので、単独のターゲットとしては扱わない。
 const PRESET_CATALOG = {
   'iss.yaml': ['absolute', 'ISS', '標準軌道', 'render'],
@@ -997,17 +998,12 @@ const PRESET_CATALOG = {
   'oos_hubble.yaml': ['relative', 'Hubble', '近接検査・30 m', 'relative'],
   'relative_static.yaml': ['relative', '汎用衛星', '固定配置', 'relative'],
   'relative_tumble.yaml': ['relative', '汎用衛星', 'タンブリング', 'relative'],
-  'relative_ykwn_absolute.yaml': ['relative', 'yKwn', '絶対軌道から相対運動を計算', 'relative'],
-  'relative_ykwn_flyaround.yaml': ['relative', 'yKwn', 'フライアラウンド', 'relative'],
-  'relative_ykwn_flyaround_earthbg.yaml': ['relative', 'yKwn', 'フライアラウンド・地球背景', 'relative'],
-  'relative_ykwn_inspection.yaml': ['relative', 'yKwn', '近接検査', 'relative'],
   'groundobs_hubble.yaml': ['ground', 'Hubble', '標準観測', 'groundobs'],
   'groundobs_hubble_turbulence.yaml': ['ground', 'Hubble', '大気揺らぎあり', 'groundobs'],
-  'groundobs_bullseye_ekran12.yaml': ['ground', 'EKRAN 12', '実観測再現', 'groundobs'],
   'groundobs_geo_point.yaml': ['ground', '汎用GEO衛星', '定点観測', 'groundobs'],
   'groundobs_geo_survey.yaml': ['ground', '汎用GEO衛星', 'サーベイ', 'groundobs'],
   'groundobs_kupt.yaml': ['ground', '汎用GEO衛星', 'KUPT観測', 'groundobs'],
-  'akatsuki.yaml': ['rotation', 'あかつき', '単機タンブリング', 'rotation'],
+  'rotation_hubble.yaml': ['rotation', 'Hubble', '単機タンブリング', 'rotation'],
 };
 let currentScenario = localStorage.getItem('mrender.scenario') || 'absolute';
 if (![...Object.keys(SCENARIOS), 'modelview'].includes(currentScenario)) currentScenario = 'absolute';
@@ -1029,7 +1025,7 @@ function presetMeta(path) {
 function scenarioPresets() {
   return STATE.files.preset.filter(p => ['*', currentScenario].includes(presetMeta(p).scenario));
 }
-function modelLabel(path) { return STATE.files.model_labels?.[path] || path.replace('models/', ''); }
+function modelLabel(path) { return STATE.files.model_labels?.[path] || path.replace(/^(internal\/)?models\//, ''); }
 function fillSelect(el, options, value) {
   el.replaceChildren(...options.map(([v, label]) => new Option(label, v)));
   el.value = options.some(([v]) => v === value) ? value : options[0]?.[0] || '';

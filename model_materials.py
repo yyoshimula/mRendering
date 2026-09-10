@@ -5,11 +5,22 @@ import yaml
 import json
 
 # Material assignments live in presets, not in these OBJ files' embedded MTLs.
+# 値は (リポジトリ相対のプリセット path, セクション, キー接頭辞)。
 _MATERIAL_PRESETS = {
-    'akatsuki.obj': ('akatsuki.yaml', 'model', 'model'),
-    'hubble.obj': ('oos_hubble.yaml', 'deputy', 'deputy'),
-    'ykwn_satellite.obj': ('relative_ykwn_inspection.yaml', 'deputy', 'deputy'),
+    'hubble.obj': ('presets/oos_hubble.yaml', 'deputy', 'deputy'),
 }
+# 配布に含めないモデル（internal/models/）の対応表は internal/material_presets.json
+# に同じ形式で置く（無ければ何もしない）。
+_MODEL_DIRS = ('models', 'internal/models')
+
+
+def _material_presets():
+    table = dict(_MATERIAL_PRESETS)
+    extra = Path(__file__).resolve().parent / 'internal' / 'material_presets.json'
+    if extra.is_file():
+        for name, spec in json.loads(extra.read_text()).items():
+            table[name] = tuple(spec)
+    return table
 
 
 @lru_cache(maxsize=16)
@@ -33,13 +44,14 @@ def registered_materials(path):
     imported = library_metadata(path)
     if imported is not None:
         return imported.get('parts', {}), imported.get('default', {})
-    entry = _MATERIAL_PRESETS.get(Path(path).name)
     root = Path(__file__).resolve().parent
+    model = Path(path).resolve()
+    entry = _material_presets().get(model.name)
     # Do not assign spacecraft materials to an unrelated file with the same name.
-    if not entry or Path(path).resolve() != (root / 'models' / Path(path).name).resolve():
+    if not entry or not any(model == (root / d / model.name).resolve() for d in _MODEL_DIRS):
         return None
     preset, section, prefix = entry
-    source = root / 'presets' / preset
+    source = root / preset
     config = _read_material_preset(str(source), source.stat().st_mtime_ns)[section]
     return config.get(prefix + '_parts', {}), config.get(prefix + '_bsdf', {})
 

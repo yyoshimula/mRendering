@@ -41,13 +41,13 @@ python satellite_orbit.py --config presets/multi_object.yaml
 ### 実行（simple_rotation.py: 単機タンブリング、軌道なし）
 ```bash
 # mrender 経由（推奨、runs/ に自動配置）
-python mrender.py rotation --config presets/akatsuki.yaml
+python mrender.py rotation --config presets/rotation_hubble.yaml
 
 # スタンドアロン
-python simple_rotation.py --config presets/akatsuki.yaml
-python simple_rotation.py --config presets/akatsuki.yaml --frames 10 --samples 4
+python simple_rotation.py --config presets/rotation_hubble.yaml
+python simple_rotation.py --config presets/rotation_hubble.yaml --frames 10 --samples 4
 python simple_rotation.py --frames 30
-python simple_rotation.py --model-path models/akatsuki.obj --model-scale 0.1 --frames 10
+python simple_rotation.py --model-path models/hubble.obj --model-scale 0.1 --frames 10
 ```
 
 ### 実行（relative_motion.py: 2 機の相対配置、軌道なし）

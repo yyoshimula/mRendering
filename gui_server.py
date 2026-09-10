@@ -519,6 +519,10 @@ def list_files() -> Dict[str, Any]:
               for p in (ROOT / 'models').glob(ext)]
     models += [p for ext in ('*.obj', '*.ply', '*.glb', '*.gltf')
                for p in (ROOT / 'models/library').rglob(ext)]
+    # 配布に含めないモデル（gitignore 対象、無ければ空）
+    if (ROOT / 'internal' / 'models').is_dir():
+        models += [p for ext in ('*.obj', '*.ply', '*.glb', '*.gltf')
+                   for p in (ROOT / 'internal' / 'models').glob(ext)]
     from model_materials import library_metadata
     model_labels = {}
     for path in models:
@@ -537,6 +541,34 @@ def list_files() -> Dict[str, Any]:
         'model': rel(models), 'model_labels': model_labels, 'texture': rel(textures), 'csv': rel(csvs),
         'envmap': rel(envmaps), 'preset': rel(presets),
     }
+
+
+# モデルの置き場。/model-assets/ と /api/model-info はこの配下だけを配信する
+MODEL_ROOTS = ('models', 'internal/models')
+
+
+def model_root_of(path: Path) -> Optional[Path]:
+    """path が MODEL_ROOTS のいずれかの配下ならそのルート（resolve 済み）を返す。"""
+    for rel in MODEL_ROOTS:
+        root = (ROOT / rel).resolve()
+        if path.is_relative_to(root):
+            return root
+    return None
+
+
+def model_asset_path(rel: str) -> Optional[Path]:
+    """/model-assets/<rel> の rel を実ファイルへ解決する。rel はリポジトリ相対
+    （models/x.obj, internal/models/x.obj）と、従来の models/ 相対（x.obj、
+    hubble_textures/x.png）の両方を受け付ける。置き場の外なら None。"""
+    for base in (ROOT, ROOT / 'models'):
+        path = (base / rel).resolve()
+        if model_root_of(path) is not None and path.is_file():
+            return path
+    return None
+
+
+def model_asset_url(path: Path) -> str:
+    return '/model-assets/' + urllib.parse.quote(str(path.resolve().relative_to(ROOT.resolve())))
 
 
 def preset_paths() -> List[Path]:
@@ -1424,15 +1456,15 @@ class GuiHandler(BaseHTTPRequestHandler):
             else:
                 self._send_file(path)
         elif route.startswith('/model-assets/'):
-            path = (ROOT / 'models' / urllib.parse.unquote(route[len('/model-assets/'):])).resolve()
-            if not path.is_relative_to((ROOT / 'models').resolve()):
+            path = model_asset_path(urllib.parse.unquote(route[len('/model-assets/'):]))
+            if path is None:
                 self._send_error_json('forbidden', 403)
             else:
                 self._send_file(path)
         elif route == '/api/model-info':
             from model_materials import registered_materials
             path = (ROOT / ((qs.get('path') or ['models/test_cube.obj'])[0] or 'models/test_cube.obj')).resolve()
-            if not path.is_relative_to((ROOT / 'models').resolve()) or not path.is_file():
+            if model_root_of(path) is None or not path.is_file():
                 self._send_error_json('モデルが見つかりません', 404)
                 return
             if path.suffix.lower() not in ('.obj', '.ply', '.glb', '.gltf'):
@@ -1440,7 +1472,7 @@ class GuiHandler(BaseHTTPRequestHandler):
                 return
             materials = registered_materials(str(path))
             self._send_json({
-                'url': '/model-assets/' + urllib.parse.quote(str(path.relative_to(ROOT / 'models'))),
+                'url': model_asset_url(path),
                 'parts': materials[0] if materials else {},
                 'default_material': materials[1] if materials else {},
             })

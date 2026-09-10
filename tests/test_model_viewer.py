@@ -38,11 +38,13 @@ class ModelViewerTests(unittest.TestCase):
         b = np.array(mi.render(mi.load_dict(later.scene_dict), spp=4, seed=3))
         np.testing.assert_array_equal(a, b)
 
+    @unittest.skipUnless((Path(__file__).resolve().parents[1] / 'internal/models/akatsuki.obj').is_file(),
+                         'internal/ のモデルが無い（配布版）')
     def test_akatsuki_materials_come_from_its_preset(self):
-        spec, _ = build_scene({'model_path': 'models/akatsuki.obj', 'keep_materials': True}, 160, 120, 4)
+        spec, _ = build_scene({'model_path': 'internal/models/akatsuki.obj', 'keep_materials': True}, 160, 120, 4)
         self.assertEqual(spec['model_part_PLANET-C_v24']['bsdf']['material'], 'Au')
         self.assertEqual(spec['model_part_sap1']['bsdf']['reflectance']['value'], [.05, .05, .3])
-        gray, _ = build_scene({'model_path': 'models/akatsuki.obj', 'keep_materials': False}, 160, 120, 4)
+        gray, _ = build_scene({'model_path': 'internal/models/akatsuki.obj', 'keep_materials': False}, 160, 120, 4)
         self.assertEqual(gray['model_mesh']['bsdf']['reflectance']['value'], [.55, .55, .55])
 
     def test_camera_override_keeps_model_geometry_fixed(self):

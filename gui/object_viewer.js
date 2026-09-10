@@ -92,8 +92,21 @@ export class ObjectViewer {
     this.resize();
     const angle = Math.atan(Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)) * Math.min(1, this.camera.aspect));
     this.controls.reset();
-    this.camera.position.copy(new THREE.Vector3(3, 2, 3).normalize().multiplyScalar(1.45 / Math.sin(angle)));
-    this.controls.target.set(0, 0, 0); this.controls.update(); this.dirty = true;
+    // Frame the mesh and its origin axes without translating the model itself.
+    const bounds = this.object ? new THREE.Box3().setFromObject(this.object) : new THREE.Box3();
+    bounds.expandByPoint(new THREE.Vector3());
+    for (let i = 0; i < 3; i++) {
+      const tip = new THREE.Vector3(); tip.setComponent(i, 1.36);
+      bounds.expandByPoint(tip);
+    }
+    const center = bounds.getCenter(new THREE.Vector3());
+    const radius = bounds.getSize(new THREE.Vector3()).length() / 2;
+    const distance = 1.1 * radius / Math.sin(angle);
+    this.camera.position.copy(new THREE.Vector3(3, 2, 3).normalize().multiplyScalar(distance).add(center));
+    this.camera.far = Math.max(100, distance + radius * 4);
+    this.camera.updateProjectionMatrix();
+    this.controls.maxDistance = Math.max(50, distance * 4);
+    this.controls.target.copy(center); this.controls.update(); this.dirty = true;
   }
   async readModel(info) {
     const url = info.url, extension = url.split('.').pop().toLowerCase();
@@ -168,9 +181,9 @@ export class ObjectViewer {
       if (generation !== this.generation) { this.disposeObject(object); return; }
       object.updateMatrixWorld(true);
       const box = new THREE.Box3().setFromObject(object);
-      const center = box.getCenter(new THREE.Vector3()), radius = box.getSize(new THREE.Vector3()).length() / 2;
+      const radius = box.getSize(new THREE.Vector3()).length() / 2;
       if (!Number.isFinite(radius) || radius <= 0) throw new Error('頂点が潰れたモデルです。元のGLBを選択してください。');
-      const group = new THREE.Group(); group.add(object); group.scale.setScalar(1 / radius); group.position.copy(center).multiplyScalar(-1 / radius);
+      const group = new THREE.Group(); group.add(object); group.scale.setScalar(1 / radius); // Keep the OBJ origin coincident with the axis origin.
       let triangles = 0;
       object.traverse(mesh => {
         if (!mesh.isMesh) return;

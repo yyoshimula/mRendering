@@ -31,7 +31,7 @@ runs/
 # tools/prepare_bmng.py で再生成できる高解像度地球タイル
 /assets/textures/earth_day_500m/
 
-# 非公開データ（共同研究由来のモデル・実観測検証一式）
+# 配布に含めないローカルデータ（共同研究由来のモデル・実観測検証・依存プリセット等）
 # 研究室内は Dropbox / tools/dgx/sync_to_dgx.sh で配布する。internal/README.md 参照。
 /internal/
 
@@ -49,5 +49,3 @@ runs/
 /models/library/**/*.obj
 /models/library/**/textures/
 
-# 非公開モデル
-/models/library/_private_*/

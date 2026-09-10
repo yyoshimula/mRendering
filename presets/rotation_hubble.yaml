@@ -1,0 +1,69 @@
+# Hubble タンブリング プリセット（rotation verb 用：軌道なし、姿勢動力学のみ）
+# 使用:
+#   python mrender.py rotation --config presets/rotation_hubble.yaml
+#   python simple_rotation.py --config presets/rotation_hubble.yaml
+#
+# 注: rotation verb は軌道力学・地球・ライティングを扱わない。
+#     CSV 軌道 (csv_path)、starfield/hdri などは rotation の引数に存在しないため指定不可。
+#     軌道込みのレンダは render verb（presets/csv_attitude_orbit.yaml 等）を使う。
+# モデル: models/hubble.obj（NASA 3D Resources "Hubble Space Telescope (A)" を OBJ 化、
+#         実寸 13.2 m）。材質は presets/oos_hubble.yaml の deputy と同じ。
+
+model:
+  model_path: models/hubble.obj
+  model_scale: 0.1
+  # デフォルトBSDF（model_parts未指定のパーツに適用）
+  model_bsdf:
+    type: principled
+    base_color: {type: rgb, value: [0.6, 0.6, 0.6]}
+    metallic: 0.5
+    roughness: 0.4
+  # パーツ別BSDF（OBJの 'o' ディレクティブ名で指定）
+  model_parts:
+    hbltel_1:              # 本体パネル・ハンドレール・太陽電池パドル
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_1.png}
+      metallic: 0.35
+      roughness: 0.35
+    hbltel_2:              # 開口部・望遠鏡バッフル（黒）・光学系
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_2.png}
+      metallic: 0.1
+      roughness: 0.5
+    hbltel_3:              # アルミ蒸着カプトン MLI（皺のある金色フォイル）
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_3.png}
+      metallic: 0.85
+      roughness: 0.28
+    hbltel_4:              # 銀色 MLI ブランケット（前胴周り）
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_4.png}
+      metallic: 0.7
+      roughness: 0.35
+    hbltel_wfc_1:          # WFC ラジエータ
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_w.png}
+      metallic: 0.2
+      roughness: 0.45
+
+dynamics:
+  # HST 級の慣性テンソル [kg·m²]（トルクフリータンブル）
+  Ix: 36000.0
+  Iy: 87000.0
+  Iz: 93000.0
+  # 初期角速度 [rad/s]
+  wx: 0.3
+  wy: 0.1
+  wz: 0.5
+
+camera:
+  view_mode: chase
+  camera_origin: [6, 4, 4]
+  camera_target: [0, 0, 0]
+  camera_fov: 40
+
+rendering:
+  frames: 120
+  samples: 20
+  width: 640
+  height: 480

@@ -442,13 +442,13 @@ def build_rotation_parser() -> argparse.ArgumentParser:
         epilog="""
 例:
   # mrender 経由（推奨、runs/ に自動配置）
-  python mrender.py rotation --config presets/akatsuki.yaml
+  python mrender.py rotation --config presets/rotation_hubble.yaml
 
   # スタンドアロン: YAMLプリセット
-  python simple_rotation.py --config presets/akatsuki.yaml
+  python simple_rotation.py --config presets/rotation_hubble.yaml
 
   # プリセット + 個別オーバーライド
-  python simple_rotation.py --config presets/akatsuki.yaml --frames 10 --samples 4
+  python simple_rotation.py --config presets/rotation_hubble.yaml --frames 10 --samples 4
 
   # デフォルトプロシージャルモデル
   python simple_rotation.py --frames 30

@@ -120,7 +120,7 @@ GUI でできること:
   座標軸はモデル中心に置き、元モデルの軸方向を保つ。
   面表示・面＋ワイヤーフレーム・ワイヤーフレームのみを切り替えられる。
   材質はリアルタイム表示用の近似で、物理レンダリングとは異なる。
-  「モデルの材質を使用」をONにすると、あかつき・Hubble・yKwnは登録プリセットの
+  「モデルの材質を使用」をONにすると、Hubble など登録済みモデルは対応プリセットの
   パーツ別材質を適用する（OFFでは形状確認用の一様なグレー）。
   ワイヤーは三角形メッシュの辺を表示し、「ワイヤーフレームのみ」では裏側の辺も見える。
   モデル確認ではDraco圧縮GLBも同梱デコーダで直接読み込む。通常のMitsubaレンダリング用の
@@ -144,7 +144,7 @@ GUI でできること:
   - リファイン画像は本番出力とピクセル一致（render 系はビット一致）
   - 操作中は簡易描画（~0.1-0.2 s）に自動で切り替わり、手を離すと通常品質へ
 - **実行マシン切替**（右上、AI ボタン横の「実行マシン」）: ジョブ・ライブプレビューを
-  local / リモート GPU（例: dgx = DGX Spark）で実行。リモート定義は
+  local / リモート GPU（例: DGX Spark）で実行。リモート定義は
   `gui_hosts.json`、結果は `runs/` へ自動ミラー。**事前に
   `tools/dgx/sync_to_dgx.sh` でコード・アセットの同期が必要**（モデルや
   プリセットを追加した後も再同期する）。詳細は [tools/dgx/README.md](tools/dgx/README.md)
@@ -201,7 +201,7 @@ python mrender.py render --config presets/iss.yaml presets/earth_beauty.yaml
 python mrender.py render --config presets/csv_attitude_orbit.yaml
 
 # 単機のタンブリング（軌道なし、姿勢動力学のみ）
-python mrender.py rotation --config presets/akatsuki.yaml
+python mrender.py rotation --config presets/rotation_hubble.yaml
 python mrender.py rotation --frames 30 --wx 0.3 --wy 0.1 --wz 1.5
 
 # 2 機の相対配置（軌道なし、相対位置 + 相対姿勢）
@@ -246,8 +246,7 @@ python mrender.py groundobs --config presets/groundobs_hubble.yaml
 サンプル CSV: `input/rel_state_sample.csv`。
 
 `relative` はフォトリアル環境オプション（地球背景・太陽黒体色・星空 envmap・
-機載カメラ視点）を持ち、OOS 近接撮像に向きます（例: `presets/oos_hubble.yaml`,
-`presets/relative_ykwn_inspection.yaml`）。地球背景は既定で**可視域だけを
+機載カメラ視点）を持ち、OOS 近接撮像に向きます（例: `presets/oos_hubble.yaml`）。地球背景は既定で**可視域だけを
 高解像度ソースから切り出して貼る**（BMNG 500 m/px タイル =
 `assets/textures/earth_day_500m/`、無ければ `tools/prepare_bmng.py` で生成、
 さらに `earth_gibs: true` で NASA GIBS の実写日次画像に切替可。要出典表記:
@@ -431,7 +430,7 @@ observer:
 
 - すべてのキーとデフォルト値は `[config_loader.py](config_loader.py)` の `_ARG_DEFAULTS`（行 188〜）が単一の正です。新規キーを足す場合もここに加える
 - セクション名は組織用で、`primary` / `camera` / `earth` のみ専用 merge 関数で再マッピング（例: `camera.fov` → `camera_fov`、`primary.model.path` → `satellite_model`）。それ以外（`rendering`, `lighting`, `animation`, `observer`）は単純なフラット化なので、内部キー名は `_ARG_DEFAULTS` の dest 名と一致させること
-- `rotation` / `relative` verb は **このリファレンスとは別の引数体系**（各 verb の `simple_rotation.py` / `relative_motion.py` の argparse 定義参照、または `presets/akatsuki.yaml` / `presets/relative_full.yaml` を雛形にする）
+- `rotation` / `relative` verb は **このリファレンスとは別の引数体系**（各 verb の `simple_rotation.py` / `relative_motion.py` の argparse 定義参照、または `presets/rotation_hubble.yaml` / `presets/relative_full.yaml` を雛形にする）
 
 ## 出力
 
@@ -698,7 +697,7 @@ mRendering/
 │   ├── multi_object.yaml       #   複数物体サンプル
 │   ├── earth_beauty.yaml       #   地球ビューティショット
 │   ├── csv_attitude_orbit.yaml #   CSV ephemeris から軌道・姿勢を読み込み（Case A）
-│   ├── akatsuki.yaml           #   あかつきタンブリング（rotation 用）
+│   ├── rotation_hubble.yaml    #   Hubble タンブリング（rotation 用）
 │   ├── relative_static.yaml    #   相対 CSV 静止/再生（Case C, relative csv モード）
 │   ├── relative_tumble.yaml    #   chief 静止 + deputy タンブリング（relative tumble）
 │   ├── relative_full.yaml      #   relative の全項目リファレンス
@@ -804,3 +803,9 @@ camera:
   view_target_name: chief    # この物体を毎フレーム注視（位置を動的取得）
   fov: 30.0
 ```
+
+## ライセンス
+
+- ソースコード: [BSD 3-Clause License](LICENSE)
+- 同梱データ（HYG 星表 = CC BY-SA 4.0、NASA の 3D モデル・地球テクスチャ、three.js 等）は
+  それぞれ別条件。一覧と帰属表示の文言は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)

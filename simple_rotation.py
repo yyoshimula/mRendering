@@ -39,13 +39,13 @@ yoshimulib 使用関数:
 
 使い方:
   # mrender 経由（推奨）
-  python mrender.py rotation --config presets/akatsuki.yaml
+  python mrender.py rotation --config presets/rotation_hubble.yaml
 
   # スタンドアロン: YAMLプリセット
-  python simple_rotation.py --config presets/akatsuki.yaml
+  python simple_rotation.py --config presets/rotation_hubble.yaml
 
   # プリセット + CLIオーバーライド（CLI引数 > YAML > デフォルト）
-  python simple_rotation.py --config presets/akatsuki.yaml --frames 10 --samples 4
+  python simple_rotation.py --config presets/rotation_hubble.yaml --frames 10 --samples 4
 
   # 複数YAML（後のファイルが優先）
   python simple_rotation.py --config presets/base.yaml presets/override.yaml
@@ -54,7 +54,7 @@ yoshimulib 使用関数:
   python simple_rotation.py --frames 30
 
   # 外部OBJモデル + CLI指定
-  python simple_rotation.py --model-path models/akatsuki.obj --model-scale 0.1 --frames 10
+  python simple_rotation.py --model-path models/hubble.obj --model-scale 0.1 --frames 10
 """
 
 import argparse

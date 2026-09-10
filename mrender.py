@@ -38,7 +38,7 @@ def _print_usage(stream=sys.stderr) -> None:
         "      python mrender.py lightcurve --config presets/iss.yaml\n"
         "      python mrender.py preview --config presets/iss.yaml presets/earth_beauty.yaml"
         "  # 後勝ちで差分 YAML を重ねる\n"
-        "      python mrender.py rotation --config presets/akatsuki.yaml\n"
+        "      python mrender.py rotation --config presets/rotation_hubble.yaml\n"
         "      python mrender.py relative --config presets/relative_static.yaml\n"
         "      python mrender.py groundobs --config presets/groundobs_hubble.yaml",
         file=stream,

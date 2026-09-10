@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """mRender.app のアイコン元画像 build/app_icon_1024.png を生成する。
 
-あかつき（models/akatsuki.obj、金色 Au 導体 + 青パドル）を黒背景・
+あかつき（internal/models/akatsuki.obj、金色 Au 導体 + 青パドル）を黒背景・
 正面寄りの太陽光でレンダし、角丸マスクだけ掛けた 1024px PNG を書き出す
 （build_app.sh が .icns 化する）。レンダには Mitsuba が要るので venv で実行。
 """
@@ -16,14 +16,14 @@ from PIL import Image, ImageDraw, ImageFilter
 REPO = Path(__file__).resolve().parent.parent
 OUT = REPO / 'build' / 'app_icon_1024.png'
 
-# アイコン専用の relative 設定（材質は presets/akatsuki.yaml と同一）
+# アイコン専用の relative 設定（材質は internal/presets/akatsuki.yaml と同一。研究室内限定モデル）
 CONFIG = """\
 rendering: {frames: 1, samples: 256, width: 1024, height: 1024, make_video: false}
 mode: static
 deputy:
   rel_position: [0.0095, 0.0, 0.0]
   rel_quat: [0.2346, -0.1094, 0.4082, 0.8754]  # パドルを対角に、ホーンアンテナが上
-  deputy_model: models/akatsuki.obj
+  deputy_model: internal/models/akatsuki.obj
   deputy_scale: 0.0001
   deputy_bsdf:
     type: roughplastic
