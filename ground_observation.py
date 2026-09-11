@@ -409,6 +409,7 @@ def earth_backdrop_at(args: argparse.Namespace, g: 'FrameGeometry') -> dict:
     PV 計測の地球照の光源、および --earthshine 時の観測像の照り返しに使う。
     """
     from relative_motion import create_earth_backdrop
+    from earth_albedo_map import resolve_albedo_map
     dist = float(np.linalg.norm(g.r_obj))
     direction = (-g.r_obj / dist).tolist()
     texture = getattr(args, 'earth_texture', None)
@@ -420,6 +421,7 @@ def earth_backdrop_at(args: argparse.Namespace, g: 'FrameGeometry') -> dict:
         str(texture or 'earth_texture.jpg'),
         orientation=rot_z(g.theta),
         uniform_albedo=None if texture else float(albedo),
+        albedo_map=resolve_albedo_map(args, g.jd),
     )
 
 

@@ -30,6 +30,7 @@
 | `assets/textures/earth_night.jpg`, `models/night_textures/` | NASA Earth Observatory **Black Marble / Earth at Night**（夜光テクスチャは本リポジトリで加工） | 帰属表示: "NASA Earth Observatory" |
 | `assets/textures/earth_clouds.jpg`, `models/cloud_textures/cloud_opacity.png` | NASA Visible Earth Blue Marble 雲レイヤ | 帰属表示: "NASA Visible Earth" |
 | （実行時取得）GIBS 日次実写画像 | NASA GIBS (Global Imagery Browse Services) | 帰属表示: "NASA GIBS / Worldview" |
+| （実行時取得）MODIS 雲分率・雲光学的厚さ・地表アルベドの科学レイヤとカラーマップ（`earth_albedo_map.py`、`runs/_gibs_cache/`） | NASA GIBS 経由の MODIS (MOD06 / MCD43) | 帰属表示: "NASA GIBS / Worldview (MODIS)" |
 
 ## 同梱ライブラリ
 

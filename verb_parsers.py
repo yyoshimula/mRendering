@@ -74,6 +74,26 @@ def add_pv_arguments(parser: argparse.ArgumentParser, hosts, default_host: str) 
                              '既定は除外（relative の既定環境光は可視化用で物理量でないため）')
 
 
+def add_earth_albedo_arguments(parser: argparse.ArgumentParser) -> None:
+    """地球アルベドマップ（earth_albedo_map.py: 地表 + 雲の 2 層、実データ）の共通フラグ。
+
+    指定時は uniform_albedo / テクスチャより優先して地球球体の反射率になる
+    （リニア 16-bit PNG、raw 読み込み）。relative / groundobs 共用。
+    """
+    parser.add_argument('--earth-albedo-map', type=str, default=None,
+                        help='既製のアルベドマップ PNG（earth_albedo_map.py の出力）を地球に貼る')
+    parser.add_argument('--earth-albedo-gibs', action='store_true', default=False,
+                        help='MODIS 雲分率・雲光学的厚さ（NASA GIBS）+ 地表アルベドから'
+                             '日付ごとのアルベドマップを自動生成して使う（要ネットワーク、'
+                             'runs/_gibs_cache/albedo/ にキャッシュ）')
+    parser.add_argument('--earth-albedo-date', type=str, default=None,
+                        help='自動生成の日付 YYYY-MM-DD（未指定はフレームの UTC 日付 / epoch）')
+    parser.add_argument('--earth-albedo-level', type=int, default=2,
+                        help='マップ解像度の GIBS level（2: 4096×2048 ≈10 km/px、3: 8192×4096）')
+    parser.add_argument('--earth-albedo-offline', action='store_true', default=False,
+                        help='自動生成でキャッシュ済みタイルのみ使う（ネットワーク不使用）')
+
+
 def build_relative_parser() -> argparse.ArgumentParser:
     """relative verb（2 機の相対配置、軌道力学なし）のパーサ。"""
     parser = argparse.ArgumentParser(
@@ -278,6 +298,7 @@ def build_relative_parser() -> argparse.ArgumentParser:
                              'にする。PV 計測の解析検証・雲なし平均アルベド (~0.3) の'
                              '概算用。クロップ/GIBS は無効になる')
 
+    add_earth_albedo_arguments(parser)
     add_pv_arguments(parser, ('deputy', 'chief'), 'deputy')
 
     # 動画化
@@ -470,6 +491,7 @@ def build_groundobs_parser() -> argparse.ArgumentParser:
                         help='観測像のレンダにも地球を入れ、物体への地球照（照り返し）を測光に'
                              '含める。既定 OFF（従来どおり太陽のみ。ランバート球の解析検証は'
                              'この既定で成立する）')
+    add_earth_albedo_arguments(parser)
     add_pv_arguments(parser, ('target',), 'target')
 
     # 出力

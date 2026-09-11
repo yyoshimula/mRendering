@@ -248,7 +248,9 @@ python mrender.py groundobs --config presets/groundobs_hubble.yaml
 （`pv_panels:` / `--pv-panel-size` を指定すると `pv_irradiance.csv` を出力。
 例: `presets/pv_hubble_orbit.yaml`、解析参照 `tools/pv_earthshine_reference.py`。
 groundobs は `--earthshine` で観測像にも地球の照り返しを乗せられる。
-詳細は CLAUDE.md の PV 計測節）。
+地球は一様アルベド球のほか、`--earth-albedo-gibs` で MODIS 雲分率・雲光学的厚さ
+（NASA GIBS）と地表アルベドから作る 2 層アルベドマップ（`earth_albedo_map.py`）
+を貼れる。詳細は CLAUDE.md の PV 計測節）。
 サンプル CSV: `input/rel_state_sample.csv`。
 
 `relative` はフォトリアル環境オプション（地球背景・太陽黒体色・星空 envmap・

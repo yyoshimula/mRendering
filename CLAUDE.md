@@ -265,9 +265,31 @@ python tools/pv_earthshine_reference.py --altitude-km 550 --sun-zenith-deg 0 60
 - **地球モデルで地球照は桁で変わる**: BMNG テクスチャ地球は雲なし合成画像を
   sRGB→リニア変換した反射率（海 ~0.02、陸 ~0.1）なので地球照は下限値
   （同一姿勢・時刻で一様 0.3 球 185 W/m² に対し BMNG 5.5 W/m²）。エネルギー収支
-  目的では `earth_uniform_albedo: 0.3`（雲込み全球平均、CERES）を使う。GIBS
-  実写は当日の雲を含むが表示用画像で放射量校正はない。文献上、惑星アルベドの
-  約 9 割は雲（Donohoe & Battisti 2011）で、地表の海陸差は 1 割程度。
+  目的では `earth_uniform_albedo: 0.3`（雲込み全球平均、CERES）か、下の
+  **2 層アルベドマップ** を使う。GIBS 実写（`--earth-gibs`）は当日の雲を含むが
+  表示用画像で放射量校正はない。文献上、惑星アルベドの約 9 割は雲
+  （Donohoe & Battisti 2011）で、地表の海陸差は 1 割程度。
+- **2 層アルベドマップ（`earth_albedo_map.py`、陸・海・雲の空間分布を実データで）**:
+  `--earth-albedo-gibs`（relative / groundobs 共通、GUI 同名欄）で日付ごとに
+  A = f_c·α_c(τ) + (1−f_c)·[α_atm + (1−α_atm)²·α_s] の equirect マップを生成し、
+  リニア 16-bit PNG（値 = A×65535）を Mitsuba bitmap `raw: True` で地球球体に貼る
+  （uniform_albedo / テクスチャより優先、クロップなし、~10 km/px = GIBS level 2）。
+  f_c = MODIS 雲分率（GIBS `MODIS_Terra_Cloud_Fraction_Day`）、α_c = 雲光学的厚さ
+  （`MODIS_Terra_Cloud_Optical_Thickness`）から二流近似 τ(1−g)/(2+τ(1−g))、g=0.85
+  （τ 無しは定数 0.55）、α_atm = 0.07（晴天大気）、α_s = 地表アルベド（既定は
+  BMNG 輝度の較正推定 0.06 + 1.2·(Y − 0.01)、`--surface-source gibs
+  --surface-layer <MODIS MCD43 レイヤ id>` で実データに切替。id は
+  `python earth_albedo_map.py --list-layers Albedo` で確認）。GIBS の科学レイヤは
+  パレット PNG なので `colormaps/v1.3/<layer>.xml` で RGB → 値に逆変換する。
+  タイル・カラーマップ・生成マップは `runs/_gibs_cache/` に永続キャッシュ、
+  sidecar JSON に全球平均アルベド・雲分率等の stats（CERES の 0.29〜0.30 と
+  比較する）。既製マップは `--earth-albedo-map <png>`。**この環境では GIBS が
+  遮断されていたため、取得部はモック（合成タイル + カラーマップ）でのみ検証
+  済み**（`tests/test_earth_albedo_map.py`）。レイヤ id・TileMatrixSet 名
+  （既定 `2km`）が違えば取得失敗 → 雲なしで生成し stats の cloud_source が
+  'none' になるので、実機で最初に `--list-layers Cloud` を確認すること。
+  一様値マップは一様球と 1.5% 以内で一致、半球ごとに 0.12/0.55 のマップで
+  衛星直下の半球の値が出ることを確認済み。
 - 地球の熱赤外（~237 W/m²）は PV には効かないので対象外。海面サングリント等の
   非ランバート BRDF は未対応（地球は diffuse）。CARS 実測の Phong フィットは
   参照ツールに定数として収録（単一波長・大気込みなのでアルベドとして使わない）。
@@ -474,6 +496,7 @@ ffmpeg -framerate 30 -i runs/<RUN>/frames/frame_%04d.png \
 - **relative_motion.py** - relative のコア：相対位置・相対姿勢で 2 機を配置（軌道なし、static/csv/tumble モード、地球背景・太陽・星空のフォトリアル環境オプション付き）
 - **ground_observation.py** - groundobs のコア：地上望遠鏡観測（WGS-84 地上局 + GMST + VSOP87 太陽 + TLE/SGP4 + 絶対測光 + 屈折 + シーイング PSF + 恒星背景 + 追尾モード + CCD ノイズ。build_context / render_observation_frame を live_worker と共用）
 - **pv_irradiance.py** - relative / groundobs の PV 計測：受光面（仮想矩形 / OBJ パーツ）の直達（解析 + レイキャスト遮蔽）・地球照（irradiancemeter、地球黒体差分）・発電量を CSV 出力。解析参照は `tools/pv_earthshine_reference.py`（Lumos 由来の格子積分）
+- **earth_albedo_map.py** - 地球の 2 層アルベドマップ生成（Mitsuba 非依存）：NASA GIBS の MODIS 雲分率・雲光学的厚さ（パレット PNG → カラーマップで物理値）+ 地表アルベド（BMNG 較正推定 / MODIS レイヤ）→ リニア 16-bit PNG。`--earth-albedo-gibs` で relative / groundobs の地球球体に貼る
 - **gui_server.py / gui/index.html** - ブラウザ GUI（標準ライブラリ HTTP サーバー + 単一 HTML）。設定フォーム→YAML 生成→verb サブプロセス起動→進捗表示
 - **verbs/** - mrender サブコマンドのシム
 - **scene_common.py** - relative/rotation 共有のシーン部品・姿勢伝播（propagate_attitude / create_axes / create_satellite / split_obj_by_parts〔(path,mtime) キャッシュ内蔵〕/ load_model_with_parts）。**唯一の実装**で、両 verb は再エクスポート
