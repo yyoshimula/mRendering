@@ -39,6 +39,12 @@
 | `gui/vendor/three/examples/jsm/libs/draco/` | Google **Draco** デコーダ | Apache License 2.0 |
 | `yoshimulib/` | [yoshimulib](https://github.com/yyoshimula/yoshimulib) の部分集合（`yoshimulib/VENDORED.md`） | MIT（`yoshimulib/LICENSE`） |
 
+## 派生コード
+
+| パス | 出典 | ライセンス / 条件 |
+|---|---|---|
+| `tools/pv_earthshine_reference.py` | Fankhauser, Tyson & Askari (2023) "Satellite Optical Brightness", AJ 166, 59 の公開コード **Lumos**（[lumos-sat](https://pypi.org/project/lumos-sat/) 1.0.9, [satellite-optical-brightness](https://github.com/Forrest-Fankhauser/satellite-optical-brightness)）の地球パネル格子（`get_earthshine_panels`）と BRDF ライブラリを放射照度計算用に書き直したもの。収録の Phong フィット値も同リポジトリ由来 | **MIT License**, Copyright (c) 2023 Forrest Fankhauser（帰属表示を保持すること） |
+
 ## 実行時依存（pip、同梱しない）
 
 Mitsuba 3（BSD 3-Clause）、Dr.Jit（BSD 3-Clause）、NumPy / SciPy（BSD）、PyYAML（MIT）、

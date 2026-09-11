@@ -243,6 +243,12 @@ python mrender.py groundobs --config presets/groundobs_hubble.yaml
   - `tumble`: chief 静止 + deputy をオイラー回転（位置固定、姿勢のみ動的）
 
 サンプルプリセット: `presets/relative_static.yaml`, `presets/relative_tumble.yaml`。
+太陽電池パネルの入射照度（直達 / 地球照 / その他 [W/m²]）と発電量 [W] の
+フレーム時系列も relative（absolute 含む）と groundobs で計測できる
+（`pv_panels:` / `--pv-panel-size` を指定すると `pv_irradiance.csv` を出力。
+例: `presets/pv_hubble_orbit.yaml`、解析参照 `tools/pv_earthshine_reference.py`。
+groundobs は `--earthshine` で観測像にも地球の照り返しを乗せられる。
+詳細は CLAUDE.md の PV 計測節）。
 サンプル CSV: `input/rel_state_sample.csv`。
 
 `relative` はフォトリアル環境オプション（地球背景・太陽黒体色・星空 envmap・

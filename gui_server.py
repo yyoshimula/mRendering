@@ -181,6 +181,34 @@ LIGHTCURVE_EXTRA = {'title': 'ライトカーブ / 観測者', 'fields': [
     F('observer_alt', '観測者高度 [km]', 'float'),
 ]}
 
+def pv_section(hosts: List[str], extra_fields: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """太陽電池パネル（PV 入射照度・発電量）のフォームセクション。
+
+    relative / groundobs で共用（verb_parsers.add_pv_arguments に対応）。
+    extra_fields は verb 固有の地球モデル欄など。
+    """
+    host_txt = hosts[0]
+    return {'title': '太陽電池パネル（PV 入射照度・発電量）', 'fields': [
+        F('pv_panel_size', '仮想パネル 幅×高さ [m]', 'vec2', optional=True,
+          help='指定すると 1 枚追加し、フレームごとに直達/地球照/その他 [W/m²] と'
+               '発電量 [W] を pv_irradiance.csv に出力'),
+        F('pv_panel_center', 'パネル中心 [m・機体系]', 'vec3'),
+        F('pv_panel_normal', '受光面法線 [機体系]', 'vec3', help='片面受光'),
+        F('pv_panel_up', '面内の上方向 [機体系]', 'vec3'),
+        F('pv_host', '取付機体', 'select', options=list(hosts)),
+        F('pv_parts', '受光面にする OBJ パーツ (YAML リスト)', 'yaml', rows=2, optional=True,
+          placeholder='- hbltel_wfc_1',
+          help='閉じたメッシュは表裏全フェイスで平均される'),
+        F('pv_panels', '複数パネル定義 (YAML)', 'yaml', rows=6, optional=True,
+          placeholder=f'- name: array\n  host: {host_txt}\n  center: [0, 4, 0]\n'
+                      '  normal: [0, 1, 0]\n  size: [2.5, 6]\n  efficiency: 0.3'),
+        F('pv_efficiency', '発電効率 η', 'float', step=0.01),
+        F('pv_sun_irradiance_wm2', '太陽定数 [W/m²]', 'float'),
+        F('pv_samples', '間接光パス数/フレーム', 'int'),
+        F('pv_direct_samples', '直達 遮蔽サンプル点数', 'int'),
+    ] + list(extra_fields)}
+
+
 RELATIVE_SECTIONS: List[Dict[str, Any]] = [
     {'title': 'レンダリング', 'fields': [
         F('frames', 'フレーム数', 'int'),
@@ -254,6 +282,12 @@ RELATIVE_SECTIONS: List[Dict[str, Any]] = [
           help="OBJ の 'o' パーツ名 → Mitsuba BSDF 辞書"),
         F('deputy_bsdf', 'デフォルト BSDF (YAML)', 'yaml', rows=4, optional=True),
     ]},
+    pv_section(['deputy', 'chief'], [
+        F('pv_include_env', '環境光も計測に含める', 'bool',
+          help='既定は除外（既定の淡い環境光は可視化用で物理量ではない）'),
+        F('earth_uniform_albedo', '地球を一様アルベド球にする', 'float', step=0.01, optional=True,
+          help='空欄=テクスチャ地球。0.3 で雲込み平均アルベドのランバート球（解析検証用）'),
+    ]),
     {'title': 'カメラ', 'fields': [
         F('camera_mode', 'カメラモード', 'select', options=['manual', 'chief_to_deputy', 'chief_fixed', 'deputy_to_chief', 'deputy_fixed']),
         F('camera_offset', '取付位置 [km・機体系]', 'vec3'),
@@ -406,6 +440,14 @@ GROUNDOBS_SECTIONS: List[Dict[str, Any]] = [
         F('sky_mag_arcsec2', '夜空輝度 [mag/arcsec²]', 'float', step=0.1),
         F('noise_seed', 'ノイズシード', 'int'),
     ]},
+    pv_section(['target'], [
+        F('earth_uniform_albedo', '地球アルベド（一様ランバート球）', 'float', step=0.01,
+          help='雲込み全球平均 0.29〜0.30（CERES）。earth_texture 指定時は無視'),
+        F('earth_texture', '地球テクスチャ', 'file', kind='texture', optional=True,
+          help='指定時は可視域クロップ + GMST 姿勢のテクスチャ地球（BMNG は雲なしで暗く、地球照は下限値）'),
+        F('earthshine', '観測像にも地球照を含める', 'bool',
+          help='物体への照り返しを測光・像に乗せる（既定 OFF = 太陽のみ）'),
+    ]),
     {'title': '出力', 'fields': [
         F('stretch', 'ストレッチ', 'select', options=['asinh', 'linear', 'log']),
         F('stretch_percentile', 'ストレッチ percentile', 'float', step=0.1),

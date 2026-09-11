@@ -60,3 +60,10 @@ sensor:
 rendering:
   stretch: asinh
   stretch_percentile: 99.5
+
+# 地球の照り返し（earthshine）を観測像・測光に含める。CLI 既定は OFF（ランバート球の
+# 解析検証は太陽のみで成立させるため）だが、通常利用のプリセットでは物理的に正しい ON にする。
+# 地上観測では天底側の地球が夜なので効果は小さく、効くのは薄明・低仰角で昼側の地球上にいるパス。
+earthshine:
+  earthshine: true
+  earth_uniform_albedo: 0.3          # 雲込み全球平均（CERES）のランバート球
