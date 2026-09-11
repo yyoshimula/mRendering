@@ -206,6 +206,15 @@ def pv_section(hosts: List[str], extra_fields: List[Dict[str, Any]]) -> Dict[str
         F('pv_sun_irradiance_wm2', '太陽定数 [W/m²]', 'float'),
         F('pv_samples', '間接光パス数/フレーム', 'int'),
         F('pv_direct_samples', '直達 遮蔽サンプル点数', 'int'),
+        F('earth_albedo_gibs', '地球アルベドマップを実データで自動生成', 'bool',
+          help='MODIS 雲分率・雲光学的厚さ（NASA GIBS）+ 地表アルベドの 2 層モデル。'
+               '日付ごとに runs/_gibs_cache/albedo/ にキャッシュ（要ネットワーク）'),
+        F('earth_albedo_map', '既製アルベドマップ PNG', 'file', kind='texture', optional=True,
+          help='earth_albedo_map.py の出力。指定時は一様アルベド/テクスチャより優先'),
+        F('earth_albedo_date', 'アルベドマップの日付', 'str', optional=True,
+          help='YYYY-MM-DD。空欄=フレームの UTC 日付'),
+        F('earth_albedo_level', 'マップ解像度 (GIBS level)', 'int',
+          help='2: 4096×2048 (~10 km/px), 3: 8192×4096'),
     ] + list(extra_fields)}
 
 

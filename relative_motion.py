@@ -666,12 +666,15 @@ def create_earth_backdrop(chief_pos, direction, altitude_km: float,
                           gibs_date: Optional[str] = None,
                           orientation: Optional[np.ndarray] = None,
                           analytic_sphere: bool = False,
-                          uniform_albedo: Optional[float] = None) -> dict:
+                          uniform_albedo: Optional[float] = None,
+                          albedo_map: Optional[str] = None) -> dict:
     """chief 近傍シーン（km 単位）に地球球体を背景として置く。
 
     uniform_albedo を与えるとテクスチャの代わりに一様反射率のランバート球に
     する（クロップ・GIBS は無効）。PV 計測の解析検証や「雲込み平均アルベド
-    0.3 の地球」の概算用。
+    0.3 の地球」の概算用。albedo_map（earth_albedo_map.py のリニア 16-bit PNG、
+    地表 + 雲の 2 層実データ）はさらに優先され、raw（sRGB 変換なし）で貼る
+    （クロップなし。~10 km/px なので可視域でも十分）。
 
     シーン座標は chief 中心の RTN(Hill) frame 想定なので、`direction` に
     [0,0,-1]（-N 方向 = 地心方向）などを与えると chief の高度 `altitude_km`
@@ -715,6 +718,9 @@ def create_earth_backdrop(chief_pos, direction, altitude_km: float,
     if uniform_albedo is not None:
         a = float(uniform_albedo)
         reflectance = {'type': 'rgb', 'value': [a, a, a]}
+        crop = False
+    if albedo_map:
+        reflectance = {'type': 'bitmap', 'filename': str(albedo_map), 'raw': True}
         crop = False
 
     if crop:
@@ -1032,8 +1038,15 @@ def build_environment(args: argparse.Namespace, chief_pos: np.ndarray
                            or 'MODIS_Terra_CorrectedReflectance_TrueColor'),
             gibs_date=getattr(args, 'earth_gibs_date', None),
             uniform_albedo=getattr(args, 'earth_uniform_albedo', None),
+            albedo_map=_albedo_map_path(args),
         )
     return sun_rgb, env_dict, earth_dict
+
+
+def _albedo_map_path(args: argparse.Namespace, jd: Optional[float] = None) -> Optional[str]:
+    """--earth-albedo-map / --earth-albedo-gibs を解決（earth_albedo_map.resolve_albedo_map）。"""
+    from earth_albedo_map import resolve_albedo_map
+    return resolve_albedo_map(args, jd)
 
 
 # ---------------------------------------------------------------------------
@@ -1206,6 +1219,7 @@ class AbsoluteOrbitContext:
                 orientation=ecef2scene,
                 analytic_sphere=bool(getattr(args, 'earth_analytic_sphere', False)),
                 uniform_albedo=getattr(args, 'earth_uniform_albedo', None),
+                albedo_map=_albedo_map_path(args, jd),
             )
         return nu, sun_dir_scene, ecef2scene, earth_dict
 
@@ -1413,7 +1427,8 @@ class PersistentScene:
                 # プラグインに新ファイルを読ませて変換済みテンソルを写す
                 donor = mi.load_dict({'type': 'bitmap',
                                       'filename': str(tex['filename']),
-                                      'wrap_mode': tex.get('wrap_mode', 'repeat')})
+                                      'wrap_mode': tex.get('wrap_mode', 'repeat'),
+                                      'raw': bool(tex.get('raw', False))})
                 self.params[f'{prefix}.data'] = mi.traverse(donor)['data']
                 if 'to_uv' in tex:
                     # traverse 上の to_uv は UV 空間の 3x3（AffineTransform3f）。
