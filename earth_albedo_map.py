@@ -8,16 +8,23 @@ PV 計測（pv_irradiance.py）と groundobs の地球照の光源として、�
 Mitsuba の bitmap（raw=True、sRGB 変換なし）として地球球体に貼る。
 
 モデル（画素ごと、[Donohoe & Battisti 2011] の分解に倣う）:
-    A = f_c · α_c(τ)  +  (1 − f_c) · [ α_atm + (1 − α_atm)² · α_s ]
-      f_c   : 雲分率（MODIS MOD06、GIBS の Cloud Fraction レイヤ）
+    A = f_c · A_cloudy  +  (1 − f_c) · [ α_atm + (1 − α_atm)² · α_s ]
+    A_cloudy = α_c + (1 − α_c)² · α_s / (1 − α_c · α_s)   （雲と地表の多重反射）
+      f_c   : 雲分率（MODIS MOD06、GIBS の Cloud Fraction レイヤ）。スワース間隙の
+              欠損は経度方向の周期線形補間で埋める（fill_gaps）
       α_c   : 雲アルベド。雲光学的厚さ τ から二流近似 α_c = τ(1−g)/(2 + τ(1−g))
-              （g = 0.85 の非対称因子。τ=10 → 0.43、τ=30 → 0.69）。
-              τ レイヤが無ければ定数 cloud_albedo（既定 0.55）
+              （g = 0.85 の非対称因子。τ=10 → 0.43、τ=30 → 0.69）。τ は通常レイヤ
+              → 部分雲 (PCL) レイヤの順に採り、それでも無い雲画素（~40%、薄雲・
+              破片雲・高太陽天頂角）は同じ緯度帯（zonal_band_deg）の取得画素の
+              雲分率重み平均で埋める。定数 cloud_albedo（0.55）は最終フォールバック
       α_atm : 晴天大気（レイリー + エアロゾル）の反射（既定 0.07）。(1−α_atm)² は
               往復の透過近似
-      α_s   : 地表アルベド。MODIS MCD43 白空アルベド（GIBS レイヤ、要 id 確認）
-              または BMNG 昼テクスチャの輝度からの較正推定（後述）
-    全球平均が CERES の ~0.29〜0.30 になるかを stats で確認できる。
+      α_s   : 地表アルベド。MODIS MCD43 白空アルベド（GIBS レイヤ
+              MODIS_Combined_L3_White_Sky_Albedo_Daily、値は ×1000）または
+              BMNG 昼テクスチャの輝度からの較正推定（後述）
+    stats の global_mean_albedo_insolation_weighted（日射量重み）を CERES の
+    惑星アルベド ~0.29〜0.30 と比較する（面積平均は極域を過大評価する）。
+    2026-03-20 の実測は 0.34（1 割強高い = 上限側の見積り）。
 
 データ源（NASA GIBS WMTS、認証不要。帰属表記: "NASA GIBS / Worldview"）:
     タイル: https://gibs.earthdata.nasa.gov/wmts/epsg4326/best/{layer}/default/
@@ -25,11 +32,15 @@ Mitsuba の bitmap（raw=True、sRGB 変換なし）として地球球体に貼�
     科学レイヤはパレット PNG なので、同サービスのカラーマップ XML
     (https://gibs.earthdata.nasa.gov/colormaps/v1.3/{layer}.xml) で
     RGB → 物理値に逆変換する（ColorMapEntry の rgb / value 属性）。
-    レイヤ id・TileMatrixSet 名は GetCapabilities で確認できる:
-        python earth_albedo_map.py --list-layers Cloud_Fraction Albedo
-    既定 id は MODIS Terra の Cloud Fraction (Day) / Cloud Optical Thickness。
-    地表アルベドの MODIS レイヤは環境から確認できなかったため既定は BMNG 推定
-    （`--surface-source gibs --surface-layer <id>` で切替）。
+    カラーマップ id はレイヤ id と別名（MODIS_Cloud_Fraction.xml 等）、TileMatrixSet も
+    レイヤごとに違う（2km / 1km / 500m）ので、どちらも GetCapabilities
+    （runs/_gibs_cache/WMTSCapabilities.xml にキャッシュ）から自動解決する。
+    タイル格子は level 0 = 640×320 px（0.5625°/px）で 2 の冪ではない
+    （level 2 = 2560×1280 = 5×3 タイル）。レイヤ id の確認:
+        python earth_albedo_map.py --list-layers Cloud Albedo
+    既定 id は MODIS Terra の Cloud Fraction (Day) / Cloud Optical Thickness (+PCL)。
+    地表アルベドの既定は BMNG 推定（`--surface-source gibs --surface-layer <id>` で
+    MCD43 に切替）。
 
 BMNG からの地表アルベド推定（surface_source=bmng）:
     昼テクスチャの sRGB → リニア輝度 Y をとり α_s = clip(a0 + gain·(Y − y0))。
@@ -88,8 +99,14 @@ def http_fetch(url: str, timeout: float = 30.0, retries: int = 2) -> Optional[by
 
 
 def gibs_grid_size(level: int) -> Tuple[int, int]:
-    """EPSG:4326 タイル行列 level の全球画素数 (W, H)。level 0 = 1024×512。"""
-    return GIBS_TILE * 2 ** (level + 1), GIBS_TILE * 2 ** level
+    """EPSG:4326 タイル行列 level の全球画素数 (W, H)。
+
+    GIBS の TileMatrixSet（2km/1km/500m/250m 共通）は level 0 が 0.5625°/px =
+    640×320 px（2×1 タイル）、以後 level ごとに 2 倍。タイル数は ceil(px/512) で
+    2 の冪ではない（level 2 = 2560×1280 px = 5×3 タイル、最下段は半分だけ有効）。
+    relative_motion の真色経路（level 8 = 163840×81920）と同じ規約。
+    """
+    return 640 * 2 ** level, 320 * 2 ** level
 
 
 def fetch_gibs_layer(layer: str, date: str, level: int, tms: str,
@@ -101,7 +118,7 @@ def fetch_gibs_layer(layer: str, date: str, level: int, tms: str,
     1 枚も取れなければ None。欠損タイルは (0,0,0)（カラーマップで no-data 扱い）。
     """
     W, H = gibs_grid_size(level)
-    n_rows, n_cols = H // GIBS_TILE, W // GIBS_TILE
+    n_rows, n_cols = -(-H // GIBS_TILE), -(-W // GIBS_TILE)
     cache = cache_dir / layer / date
     cache.mkdir(parents=True, exist_ok=True)
     tiles = [(r, c) for r in range(n_rows) for c in range(n_cols)]
@@ -136,8 +153,9 @@ def fetch_gibs_layer(layer: str, date: str, level: int, tms: str,
         if path is None:
             continue
         ta = np.asarray(Image.open(path).convert('RGB'))
-        out[r * GIBS_TILE:(r + 1) * GIBS_TILE, c * GIBS_TILE:(c + 1) * GIBS_TILE] = \
-            ta[:GIBS_TILE, :GIBS_TILE]
+        h = min(GIBS_TILE, H - r * GIBS_TILE)
+        w = min(GIBS_TILE, W - c * GIBS_TILE)
+        out[r * GIBS_TILE:r * GIBS_TILE + h, c * GIBS_TILE:c * GIBS_TILE + w] = ta[:h, :w]
     return out
 
 
@@ -191,19 +209,28 @@ def apply_colormap(rgb: np.ndarray, lut: Dict[Tuple[int, int, int], float]) -> n
     return out
 
 
-def load_gibs_values(layer: str, date: str, level: int, tms: str,
+def load_gibs_values(layer: str, date: str, level: int, tms: Optional[str] = None,
                      fetch: Fetcher = http_fetch, cache_dir: Path = CACHE_DIR,
-                     offline: bool = False) -> Optional[np.ndarray]:
-    """GIBS 科学レイヤの物理値マップ (H, W)（NaN = 欠損）。カラーマップもキャッシュ。"""
+                     offline: bool = False, fallback_tms: Optional[str] = None
+                     ) -> Optional[np.ndarray]:
+    """GIBS 科学レイヤの物理値マップ (H, W)（NaN = 欠損）。カラーマップもキャッシュ。
+
+    カラーマップ URL と TileMatrixSet は GetCapabilities（`gibs_layer_info`）で
+    解決する（tms=None なら自動、指定があってもレイヤに無ければ差し替え）。
+    GetCapabilities が取れない環境では `colormaps/v1.3/<layer>.xml` と指定 tms で試す。
+    """
     cm_path = cache_dir / layer / 'colormap.xml'
     if cm_path.exists():
         xml_text = cm_path.read_text()
+        info = gibs_layer_info(layer, fetch, cache_dir, offline=True)
     else:
         if offline:
             return None
-        data = fetch(GIBS_COLORMAP.format(layer=layer))
+        info = gibs_layer_info(layer, fetch, cache_dir, offline)
+        url = info.get('colormap') or GIBS_COLORMAP.format(layer=layer)
+        data = fetch(url)
         if not data:
-            print(f'  gibs: {layer} のカラーマップを取得できません', file=sys.stderr)
+            print(f'  gibs: {layer} のカラーマップ {url} を取得できません', file=sys.stderr)
             return None
         cm_path.parent.mkdir(parents=True, exist_ok=True)
         cm_path.write_bytes(data)
@@ -212,10 +239,55 @@ def load_gibs_values(layer: str, date: str, level: int, tms: str,
     if not lut:
         print(f'  gibs: {layer} のカラーマップに数値項目がありません', file=sys.stderr)
         return None
+    tms = resolve_tms(layer, tms, info, fallback_tms)
+    if not tms:
+        print(f'  gibs: {layer} の TileMatrixSet を決められません（--*-tms で指定）',
+              file=sys.stderr)
+        return None
     rgb = fetch_gibs_layer(layer, date, level, tms, fetch, cache_dir, offline)
     if rgb is None:
         return None
     return apply_colormap(rgb, lut)
+
+
+def _iter_capability_layers(root):
+    """GetCapabilities の <Layer> ごとに (id, [tms...], colormap_url|None) を yield。
+
+    カラーマップ id はレイヤ id と別名のことが多い（例: MODIS_Terra_Cloud_Fraction_Day
+    → colormaps/v1.3/MODIS_Cloud_Fraction.xml）ので、<ows:Metadata> の
+    xlink:role が .../colormap/1.3（無ければ colormap/ で終わるもの）の href を採る。
+    """
+    for layer in root.iter():
+        if not layer.tag.endswith('}Layer') and layer.tag != 'Layer':
+            continue
+        ident = None
+        tms = []
+        cmap13 = cmap_any = None
+        for el in layer.iter():
+            if el.tag.endswith('Identifier') and ident is None and el.text:
+                ident = el.text.strip()
+            elif el.tag.endswith('}TileMatrixSet') or el.tag == 'TileMatrixSet':
+                if el.text:
+                    tms.append(el.text.strip())
+            elif el.tag.endswith('Metadata'):
+                role = href = ''
+                for k, v in el.attrib.items():
+                    if k.endswith('role'):
+                        role = v
+                    elif k.endswith('href'):
+                        href = v
+                if 'colormap' in role and href:
+                    if role.rstrip('/').endswith('colormap/1.3'):
+                        cmap13 = href
+                    elif cmap_any is None:
+                        cmap_any = href
+        if ident:
+            # 出現順 = GetCapabilities の宣言順（レイヤ本来の解像度）
+            seen = []
+            for t in tms:
+                if t not in seen:
+                    seen.append(t)
+            yield ident, seen, (cmap13 or cmap_any)
 
 
 def list_layers(keywords, fetch: Fetcher = http_fetch) -> list:
@@ -225,20 +297,63 @@ def list_layers(keywords, fetch: Fetcher = http_fetch) -> list:
         raise RuntimeError('GIBS GetCapabilities を取得できません')
     root = ET.fromstring(data)
     out = []
-    for layer in root.iter():
-        if not layer.tag.endswith('}Layer') and layer.tag != 'Layer':
-            continue
-        ident = None
-        tms = []
-        for el in layer.iter():
-            if el.tag.endswith('Identifier') and ident is None and el.text:
-                ident = el.text.strip()
-            if el.tag.endswith('}TileMatrixSet') or el.tag == 'TileMatrixSet':
-                if el.text:
-                    tms.append(el.text.strip())
-        if ident and (not keywords or any(k.lower() in ident.lower() for k in keywords)):
+    for ident, tms, _cm in _iter_capability_layers(root):
+        if not keywords or any(k.lower() in ident.lower() for k in keywords):
             out.append((ident, sorted(set(tms))))
     return out
+
+
+_LAYER_INFO_CACHE: Dict[str, dict] = {}
+
+
+def gibs_layer_info(layer: str, fetch: Fetcher = http_fetch, cache_dir: Path = CACHE_DIR,
+                    offline: bool = False) -> dict:
+    """レイヤの {'tms': [...], 'colormap': url|None} を GetCapabilities から解決する。
+
+    GetCapabilities（~5 MB）は cache_dir/WMTSCapabilities.xml に永続キャッシュし、
+    取得できない・レイヤが無い場合は空辞書（呼び出し側は既定値で続行）。
+    """
+    key = f'{cache_dir}|{layer}'
+    if key in _LAYER_INFO_CACHE:
+        return _LAYER_INFO_CACHE[key]
+    cap_path = Path(cache_dir) / 'WMTSCapabilities.xml'
+    data = None
+    if cap_path.exists() and cap_path.stat().st_size > 0:
+        data = cap_path.read_bytes()
+    elif not offline:
+        data = fetch(GIBS_CAPABILITIES)
+        if data:
+            cap_path.parent.mkdir(parents=True, exist_ok=True)
+            cap_path.write_bytes(data)
+    info: dict = {}
+    if data:
+        try:
+            root = ET.fromstring(data)
+            for ident, tms, cm in _iter_capability_layers(root):
+                if ident == layer:
+                    info = {'tms': tms, 'colormap': cm}
+                    break
+        except ET.ParseError:
+            info = {}
+    _LAYER_INFO_CACHE[key] = info
+    return info
+
+
+def resolve_tms(layer: str, tms: Optional[str], info: dict,
+                fallback: Optional[str] = None) -> Optional[str]:
+    """TileMatrixSet を決める: 指定が capabilities に無ければ宣言順の先頭へ差し替え。
+
+    capabilities が無い（オフライン・取得失敗）ときは指定値 > fallback の順。
+    """
+    avail = info.get('tms') or []
+    if tms and (not avail or tms in avail):
+        return tms
+    if avail:
+        if tms:
+            print(f'  gibs: {layer} に TileMatrixSet {tms!r} は無いので {avail[0]!r} を使用',
+                  file=sys.stderr)
+        return avail[0]
+    return tms or fallback
 
 
 # ---------------------------------------------------------------------------
@@ -266,15 +381,71 @@ def surface_albedo_from_bmng(rgb: np.ndarray, a0: float = 0.06, y0: float = 0.01
 
 def composite_albedo(surface: np.ndarray, cloud_fraction: np.ndarray,
                      cloud_albedo: np.ndarray, atm_albedo: float = 0.07) -> np.ndarray:
-    """A = f·α_c + (1−f)·[α_atm + (1−α_atm)²·α_s]。NaN の入力は保守的に埋める。"""
+    """A = f·A_cloudy + (1−f)·[α_atm + (1−α_atm)²·α_s]。NaN の入力は保守的に埋める。
+
+    曇天側は雲と地表の多重反射を含む A_cloudy = α_c + (1−α_c)²·α_s / (1 − α_c·α_s)
+    （Lacis & Hansen 型、吸収なし）。雪氷面（α_s ≈ 0.8）の上の雲で
+    f·α_c だけだと地表より暗くなる不整合を避ける。海（α_s 0.06）では +0.02 程度。
+    """
     f = np.nan_to_num(np.asarray(cloud_fraction, dtype=np.float64), nan=0.0)
     f = np.clip(f, 0.0, 1.0)
     ac = np.asarray(cloud_albedo, dtype=np.float64)
-    ac = np.where(np.isfinite(ac), ac, 0.55)
+    ac = np.clip(np.where(np.isfinite(ac), ac, 0.55), 0.0, 0.999)
     s = np.asarray(surface, dtype=np.float64)
-    s = np.where(np.isfinite(s), s, 0.06)
+    s = np.clip(np.where(np.isfinite(s), s, 0.06), 0.0, 0.999)
     clear = atm_albedo + (1.0 - atm_albedo) ** 2 * s
-    return np.clip(f * ac + (1.0 - f) * clear, 0.0, 1.0)
+    cloudy = ac + (1.0 - ac) ** 2 * s / (1.0 - ac * s)
+    return np.clip(f * cloudy + (1.0 - f) * clear, 0.0, 1.0)
+
+
+def fill_gaps_along_longitude(vals: np.ndarray, min_valid_frac: float = 0.5) -> np.ndarray:
+    """NaN（MODIS スワース間の欠損など）を行ごとに経度方向へ周期線形補間で埋める。
+
+    有効画素が min_valid_frac 未満の行（極夜など日中データが無い緯度帯）は
+    触らない（NaN のまま → 呼び出し側で晴天扱い）。
+    """
+    out = np.array(vals, dtype=np.float64, copy=True)
+    h, w = out.shape
+    x = np.arange(w)
+    for r in range(h):
+        row = out[r]
+        ok = np.isfinite(row)
+        n = int(ok.sum())
+        if n == w or n < max(2, int(min_valid_frac * w)):
+            continue
+        xs = x[ok]
+        ys = row[ok]
+        # 周期境界: 両端に 1 周ぶんの複製を足して補間
+        xp = np.concatenate([xs - w, xs, xs + w])
+        yp = np.concatenate([ys, ys, ys])
+        row[~ok] = np.interp(x[~ok], xp, yp)
+    return out
+
+
+def fill_cloud_albedo_zonal(ac: np.ndarray, have: np.ndarray, weight: np.ndarray,
+                            band_rows: int, fallback: float) -> Tuple[np.ndarray, dict]:
+    """τ 取得済み画素の α_c を緯度帯ごとに雲分率重み平均し、未取得画素へ埋める。
+
+    帯に取得画素が無ければ全球平均、それも無ければ fallback（定数）。
+    戻り値は (埋めた α_c, {'global': 全球平均 or None, 'bands': 帯数}).
+    """
+    h = ac.shape[0]
+    wsum_g = float((weight * have).sum())
+    global_mean = float((weight * ac * have).sum() / wsum_g) if wsum_g > 0 else None
+    out = np.array(ac, dtype=np.float64, copy=True)
+    for r0 in range(0, h, band_rows):
+        r1 = min(h, r0 + band_rows)
+        hv = have[r0:r1]
+        ws = float((weight[r0:r1] * hv).sum())
+        if ws > 0:
+            val = float((weight[r0:r1] * ac[r0:r1] * hv).sum() / ws)
+        elif global_mean is not None:
+            val = global_mean
+        else:
+            val = fallback
+        blk = out[r0:r1]
+        blk[~hv] = val
+    return out, {'global': global_mean, 'bands': -(-h // band_rows)}
 
 
 def area_weighted_mean(a: np.ndarray) -> float:
@@ -282,6 +453,28 @@ def area_weighted_mean(a: np.ndarray) -> float:
     h = a.shape[0]
     lat = (0.5 - (np.arange(h) + 0.5) / h) * math.pi
     w = np.cos(lat)[:, None] * np.ones_like(a)
+    return float(np.nansum(a * w) / np.sum(w))
+
+
+def solar_declination_rad(date: str) -> float:
+    """日付 'YYYY-MM-DD' の太陽赤緯の簡易近似 [rad]（±0.5°）。"""
+    from datetime import date as _date
+    d = _date.fromisoformat(str(date)[:10])
+    doy = d.timetuple().tm_yday
+    return math.radians(23.44) * math.sin(2.0 * math.pi * (doy - 81) / 365.25)
+
+
+def insolation_weighted_mean(a: np.ndarray, date: str) -> float:
+    """日平均 TOA 日射量 × 面積で重み付けた全球平均（CERES の惑星アルベド
+    = 反射/入射 と同じ重み。面積平均は低日射の極域の高アルベドを過大評価する）。
+    """
+    h = a.shape[0]
+    lat = (0.5 - (np.arange(h) + 0.5) / h) * math.pi
+    dec = solar_declination_rad(date)
+    x = np.clip(-np.tan(lat) * math.tan(dec), -1.0, 1.0)
+    h0 = np.arccos(x)
+    q = h0 * np.sin(lat) * math.sin(dec) + np.cos(lat) * math.cos(dec) * np.sin(h0)
+    w = (np.cos(lat) * np.clip(q, 0.0, None))[:, None] * np.ones_like(a)
     return float(np.nansum(a * w) / np.sum(w))
 
 
@@ -309,16 +502,19 @@ def resize_box(a: np.ndarray, shape: Tuple[int, int]) -> np.ndarray:
 @dataclass
 class AlbedoMapConfig:
     date: str
-    level: int = 2                       # GIBS level: 2 = 4096×2048 (~10 km/px), 3 = 8192×4096
+    level: int = 2                       # GIBS level: 2 = 2560×1280 (~15.6 km/px), 3 = 5120×2560 (~7.8 km/px)
     cloud_layer: str = 'MODIS_Terra_Cloud_Fraction_Day'
-    cloud_tms: str = '2km'
+    cloud_tms: Optional[str] = None      # None = GetCapabilities から自動
     tau_layer: Optional[str] = 'MODIS_Terra_Cloud_Optical_Thickness'
-    tau_tms: str = '2km'
+    tau_tms: Optional[str] = None
+    tau_pcl_layer: Optional[str] = 'MODIS_Terra_Cloud_Optical_Thickness_PCL'  # 部分雲画素の τ（副）
+    fill_gaps: bool = True               # スワース欠損の雲分率を経度方向に補間
+    zonal_band_deg: float = 10.0         # τ 欠損雲画素の α_c フィルに使う緯度帯幅
     surface_source: str = 'bmng'         # 'bmng' | 'gibs'
     surface_layer: Optional[str] = None  # surface_source='gibs' のレイヤ id（要確認）
-    surface_tms: str = '500m'
+    surface_tms: Optional[str] = None
     bmng_path: str = 'assets/textures/earth_day.jpg'
-    cloud_albedo: float = 0.55           # τ レイヤ無し時の定数
+    cloud_albedo: float = 0.55           # τ が全く取れない時の最終フォールバック定数
     asymmetry_g: float = 0.85
     atm_albedo: float = 0.07
     ocean_albedo: float = 0.06
@@ -353,8 +549,12 @@ def build_albedo_map(cfg: AlbedoMapConfig, out_path: Optional[Path] = None,
     surface = None
     if cfg.surface_source == 'gibs' and cfg.surface_layer:
         vals = load_gibs_values(cfg.surface_layer, cfg.date, cfg.level, cfg.surface_tms,
-                                fetch, cfg.cache_dir, cfg.offline)
+                                fetch, cfg.cache_dir, cfg.offline, fallback_tms='500m')
         if vals is not None:
+            # MCD43 系レイヤはアルベド×1000 の整数値（0..~750、fill は 16758 以上）
+            if np.nanmax(vals) > 1.5:
+                vals = vals / 1000.0
+            vals = np.where(vals > 1.0, np.nan, vals)
             # MODIS アルベドは陸のみ（海は欠損）→ 海は定数
             surface = np.where(np.isfinite(vals), vals, cfg.ocean_albedo)
         else:
@@ -378,21 +578,52 @@ def build_albedo_map(cfg: AlbedoMapConfig, out_path: Optional[Path] = None,
     cloud_src = 'none'
     frac = np.zeros(shape)
     ac = np.full(shape, cfg.cloud_albedo)
+    tau_cov = 0.0           # 雲分率重みで見た τ 取得率
+    gap_area = 0.0          # 経度補間で埋めた面積率
+    nodata_area = 0.0       # 補間後も雲データが無い面積率（晴天扱い）
+    ac_fill: dict = {}
     fvals = load_gibs_values(cfg.cloud_layer, cfg.date, cfg.level, cfg.cloud_tms,
-                             fetch, cfg.cache_dir, cfg.offline)
+                             fetch, cfg.cache_dir, cfg.offline, fallback_tms='2km')
     if fvals is not None:
         cloud_src = cfg.cloud_layer
         if np.nanmax(fvals) > 1.5:      # 百分率で来るレイヤに備える
             fvals = fvals / 100.0
-        frac = np.clip(np.nan_to_num(resize_box(fvals, shape), nan=0.0), 0.0, 1.0)
+        fvals = resize_box(fvals, shape)
+        missing0 = ~np.isfinite(fvals)
+        if cfg.fill_gaps:
+            fvals = fill_gaps_along_longitude(fvals)
+        missing1 = ~np.isfinite(fvals)
+        gap_area = area_weighted_mean((missing0 & ~missing1).astype(np.float64))
+        nodata_area = area_weighted_mean(missing1.astype(np.float64))
+        frac = np.clip(np.nan_to_num(fvals, nan=0.0), 0.0, 1.0)
+        have = np.zeros(shape, dtype=bool)
         if cfg.tau_layer:
             tvals = load_gibs_values(cfg.tau_layer, cfg.date, cfg.level, cfg.tau_tms,
-                                     fetch, cfg.cache_dir, cfg.offline)
+                                     fetch, cfg.cache_dir, cfg.offline, fallback_tms='1km')
             if tvals is not None:
-                t = resize_box(np.nan_to_num(tvals, nan=np.nan), shape)
-                ac_tau = cloud_albedo_from_tau(t, cfg.asymmetry_g)
-                ac = np.where(np.isfinite(t) & (t > 0), ac_tau, cfg.cloud_albedo)
+                t = resize_box(tvals, shape)
+                have = np.isfinite(t) & (t > 0)
+                ac = np.where(have, cloud_albedo_from_tau(np.nan_to_num(t), cfg.asymmetry_g),
+                              np.nan)
                 cloud_src += f'+{cfg.tau_layer}'
+                # 部分雲（PCL）画素の τ を副ソースとして重ねる
+                if cfg.tau_pcl_layer and str(cfg.tau_pcl_layer).lower() != 'none':
+                    pv = load_gibs_values(cfg.tau_pcl_layer, cfg.date, cfg.level, cfg.tau_tms,
+                                          fetch, cfg.cache_dir, cfg.offline, fallback_tms='1km')
+                    if pv is not None:
+                        tp = resize_box(pv, shape)
+                        hp = np.isfinite(tp) & (tp > 0) & ~have
+                        ac = np.where(hp, cloud_albedo_from_tau(np.nan_to_num(tp), cfg.asymmetry_g), ac)
+                        have = have | hp
+                        cloud_src += '+PCL'
+        wgt = np.cos((0.5 - (np.arange(H) + 0.5) / H) * math.pi)[:, None] * frac
+        tau_cov = float((wgt * have).sum() / max(wgt.sum(), 1e-12))
+        if have.any():
+            band_rows = max(1, int(round(cfg.zonal_band_deg / 180.0 * H)))
+            ac, ac_fill = fill_cloud_albedo_zonal(np.nan_to_num(ac), have, wgt, band_rows,
+                                                  cfg.cloud_albedo)
+        else:
+            ac = np.full(shape, cfg.cloud_albedo)
     else:
         print(f'  albedo: 雲レイヤ {cfg.cloud_layer} {cfg.date} を取得できず雲なしで生成',
               file=sys.stderr)
@@ -405,12 +636,18 @@ def build_albedo_map(cfg: AlbedoMapConfig, out_path: Optional[Path] = None,
     stats = {
         'date': cfg.date, 'level': cfg.level, 'width': W, 'height': H,
         'surface_source': surface_src, 'cloud_source': cloud_src,
-        'model': 'A = f*alpha_c + (1-f)*(alpha_atm + (1-alpha_atm)^2*alpha_s)',
+        'model': ('A = f*[alpha_c + (1-alpha_c)^2*alpha_s/(1-alpha_c*alpha_s)]'
+                  ' + (1-f)*(alpha_atm + (1-alpha_atm)^2*alpha_s)'),
         'atm_albedo': cfg.atm_albedo, 'ocean_albedo': cfg.ocean_albedo,
         'global_mean_albedo': area_weighted_mean(A),
+        'global_mean_albedo_insolation_weighted': insolation_weighted_mean(A, cfg.date),
         'global_mean_surface_albedo': area_weighted_mean(surface),
         'global_mean_cloud_fraction': area_weighted_mean(frac),
         'global_mean_cloud_albedo': area_weighted_mean(np.where(frac > 0, ac, np.nan)),
+        'cloud_tau_coverage': tau_cov,
+        'cloud_albedo_fill_global_mean': ac_fill.get('global'),
+        'cloud_gap_filled_area': gap_area,
+        'cloud_nodata_area': nodata_area,
         'attribution': 'NASA GIBS / Worldview (MODIS); NASA Blue Marble Next Generation',
     }
     stats_path.write_text(json.dumps(stats, indent=2, ensure_ascii=False))
@@ -460,8 +697,10 @@ def resolve_albedo_map(args, jd: Optional[float] = None) -> Optional[str]:
     if str(p) not in _REPORTED:
         _REPORTED.add(str(p))
         print(f"  地球アルベドマップ: {p} (地表={stats['surface_source']}, "
-              f"雲={stats['cloud_source']}, 全球平均 {stats['global_mean_albedo']:.3f}, "
-              f"雲分率 {stats['global_mean_cloud_fraction']:.2f})")
+              f"雲={stats['cloud_source']}, 全球平均 {stats['global_mean_albedo']:.3f} "
+              f"[日射量重み {stats.get('global_mean_albedo_insolation_weighted', float('nan')):.3f}], "
+              f"雲分率 {stats['global_mean_cloud_fraction']:.2f}, "
+              f"τ取得率 {stats.get('cloud_tau_coverage', 0.0):.2f})")
     return str(p)
 
 
@@ -469,16 +708,23 @@ def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description='地球アルベドマップ（地表 + 雲の 2 層）を実データから生成')
     ap.add_argument('--date', type=str, default=None, help='YYYY-MM-DD（既定: 昨日 UTC）')
     ap.add_argument('--out', type=str, default=None, help='出力 PNG（既定: runs/_gibs_cache/albedo/）')
-    ap.add_argument('--level', type=int, default=2, help='GIBS level（2: 4096×2048, 3: 8192×4096）')
+    ap.add_argument('--level', type=int, default=2, help='GIBS level（2: 2560×1280 ≈15.6 km/px, 3: 5120×2560 ≈7.8 km/px）')
     ap.add_argument('--cloud-layer', type=str, default='MODIS_Terra_Cloud_Fraction_Day')
-    ap.add_argument('--cloud-tms', type=str, default='2km')
+    ap.add_argument('--cloud-tms', type=str, default=None,
+                    help='TileMatrixSet（既定: GetCapabilities から自動）')
     ap.add_argument('--tau-layer', type=str, default='MODIS_Terra_Cloud_Optical_Thickness',
                     help="雲光学的厚さレイヤ（'none' で定数 cloud_albedo）")
-    ap.add_argument('--tau-tms', type=str, default='2km')
+    ap.add_argument('--tau-tms', type=str, default=None)
+    ap.add_argument('--tau-pcl-layer', type=str, default='MODIS_Terra_Cloud_Optical_Thickness_PCL',
+                    help="部分雲画素の τ レイヤ（副ソース、'none' で無効）")
+    ap.add_argument('--no-fill-gaps', action='store_true', default=False,
+                    help='スワース欠損の雲分率を経度方向に補間しない（欠損 = 晴天）')
+    ap.add_argument('--zonal-band-deg', type=float, default=10.0,
+                    help='τ 欠損雲画素の α_c を埋める緯度帯平均の帯幅 [deg]')
     ap.add_argument('--surface-source', choices=['bmng', 'gibs'], default='bmng')
     ap.add_argument('--surface-layer', type=str, default=None,
                     help='surface_source=gibs の MODIS アルベドレイヤ id（--list-layers Albedo で確認）')
-    ap.add_argument('--surface-tms', type=str, default='500m')
+    ap.add_argument('--surface-tms', type=str, default=None)
     ap.add_argument('--cloud-albedo', type=float, default=0.55)
     ap.add_argument('--atm-albedo', type=float, default=0.07)
     ap.add_argument('--ocean-albedo', type=float, default=0.06)
@@ -500,15 +746,18 @@ def main(argv=None) -> None:
     cfg = AlbedoMapConfig(
         date=date, level=a.level, cloud_layer=a.cloud_layer, cloud_tms=a.cloud_tms,
         tau_layer=None if a.tau_layer in (None, '', 'none') else a.tau_layer,
-        tau_tms=a.tau_tms, surface_source=a.surface_source, surface_layer=a.surface_layer,
+        tau_tms=a.tau_tms, tau_pcl_layer=a.tau_pcl_layer, fill_gaps=not a.no_fill_gaps,
+        zonal_band_deg=a.zonal_band_deg,
+        surface_source=a.surface_source, surface_layer=a.surface_layer,
         surface_tms=a.surface_tms, cloud_albedo=a.cloud_albedo, atm_albedo=a.atm_albedo,
         ocean_albedo=a.ocean_albedo, offline=a.offline)
     path, stats = build_albedo_map(cfg, a.out, force=a.force)
     print(f'アルベドマップ: {path}')
     for k in ('surface_source', 'cloud_source', 'global_mean_albedo',
-              'global_mean_surface_albedo', 'global_mean_cloud_fraction',
-              'global_mean_cloud_albedo'):
-        v = stats[k]
+              'global_mean_albedo_insolation_weighted', 'global_mean_surface_albedo',
+              'global_mean_cloud_fraction', 'global_mean_cloud_albedo', 'cloud_tau_coverage',
+              'cloud_albedo_fill_global_mean', 'cloud_gap_filled_area', 'cloud_nodata_area'):
+        v = stats.get(k)
         print(f'  {k}: {v:.4f}' if isinstance(v, float) else f'  {k}: {v}')
 
 

@@ -56,7 +56,8 @@ class ColormapTests(unittest.TestCase):
         self.assertAlmostEqual(float(eam.cloud_albedo_from_tau(np.array(10.0))), 1.5 / 3.5)
         self.assertAlmostEqual(float(eam.cloud_albedo_from_tau(np.array(0.0))), 0.0)
         a = eam.composite_albedo(np.array(0.1), np.array(0.5), np.array(0.6), atm_albedo=0.07)
-        self.assertAlmostEqual(float(a), 0.5 * 0.6 + 0.5 * (0.07 + 0.93 ** 2 * 0.1))
+        cloudy = 0.6 + 0.4 ** 2 * 0.1 / (1 - 0.6 * 0.1)   # 雲下の地表との多重反射込み
+        self.assertAlmostEqual(float(a), 0.5 * cloudy + 0.5 * (0.07 + 0.93 ** 2 * 0.1))
         # 面積重み平均: 上下対称の一様マップは値そのもの
         self.assertAlmostEqual(eam.area_weighted_mean(np.full((8, 16), 0.3)), 0.3)
         self.assertEqual(eam.jd_to_date(2451545.0), '2000-01-01')      # J2000.0 = 正午
@@ -89,23 +90,28 @@ class BuildMapTests(unittest.TestCase):
             Image.new('RGB', (64, 32), (128, 128, 128)).save(bmng)
             cfg = eam.AlbedoMapConfig(
                 date='2026-03-20', level=0, cloud_layer='X_Cloud_Fraction_Day',
-                tau_layer='X_Optical_Thickness', surface_source='bmng',
+                tau_layer='X_Optical_Thickness', tau_pcl_layer=None, surface_source='bmng',
                 bmng_path=str(bmng), cache_dir=Path(tmp) / 'cache')
             path, stats = eam.build_albedo_map(cfg, fetch=fetch)
             self.assertTrue(path.exists())
             arr = np.asarray(Image.open(path)).astype(np.float64) / 65535.0
-            self.assertEqual(arr.shape, (512, 1024))
+            # GIBS level 0 = 640×320 px（2×1 タイル: col 0 = px 0..511、col 1 = 512..639）
+            self.assertEqual(arr.shape, (320, 640))
             a_s = 0.06 + 1.2 * (eam.srgb_to_linear(np.array(128 / 255.0)) - 0.01)
             clear = 0.07 + 0.93 ** 2 * a_s
             ac = 20.5 * 0.15 / (2 + 20.5 * 0.15)
-            west = 0.85 * ac + 0.15 * clear
-            east = 0.05 * ac + 0.95 * clear
-            self.assertAlmostEqual(float(arr[256, 100]), west, delta=2e-4)
-            self.assertAlmostEqual(float(arr[256, 900]), east, delta=2e-4)
+            cloudy = ac + (1 - ac) ** 2 * a_s / (1 - ac * a_s)   # 雲下の地表との多重反射
+            west = 0.85 * cloudy + 0.15 * clear
+            east = 0.05 * cloudy + 0.95 * clear
+            self.assertAlmostEqual(float(arr[160, 100]), west, delta=2e-4)
+            self.assertAlmostEqual(float(arr[160, 600]), east, delta=2e-4)
             self.assertEqual(stats['cloud_source'], 'X_Cloud_Fraction_Day+X_Optical_Thickness')
             self.assertEqual(stats['surface_source'], 'bmng')
-            self.assertAlmostEqual(stats['global_mean_cloud_fraction'], 0.45, delta=1e-6)
-            self.assertAlmostEqual(stats['global_mean_albedo'], 0.5 * (west + east), delta=1e-3)
+            w0 = 512 / 640
+            self.assertAlmostEqual(stats['global_mean_cloud_fraction'],
+                                   w0 * 0.85 + (1 - w0) * 0.05, delta=1e-6)
+            self.assertAlmostEqual(stats['global_mean_albedo'],
+                                   w0 * west + (1 - w0) * east, delta=1e-3)
             n_first = len(calls)
             self.assertGreater(n_first, 0)
             # 2 回目: PNG + JSON があるので取得なし

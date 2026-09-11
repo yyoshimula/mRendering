@@ -271,25 +271,45 @@ python tools/pv_earthshine_reference.py --altitude-km 550 --sun-zenith-deg 0 60
   （Donohoe & Battisti 2011）で、地表の海陸差は 1 割程度。
 - **2 層アルベドマップ（`earth_albedo_map.py`、陸・海・雲の空間分布を実データで）**:
   `--earth-albedo-gibs`（relative / groundobs 共通、GUI 同名欄）で日付ごとに
-  A = f_c·α_c(τ) + (1−f_c)·[α_atm + (1−α_atm)²·α_s] の equirect マップを生成し、
-  リニア 16-bit PNG（値 = A×65535）を Mitsuba bitmap `raw: True` で地球球体に貼る
-  （uniform_albedo / テクスチャより優先、クロップなし、~10 km/px = GIBS level 2）。
+  A = f_c·A_cloudy + (1−f_c)·[α_atm + (1−α_atm)²·α_s]、
+  A_cloudy = α_c + (1−α_c)²·α_s/(1−α_c·α_s)（雲と地表の多重反射。雪氷上の雲が
+  地表より暗くなるのを防ぐ）の equirect マップを生成し、リニア 16-bit PNG
+  （値 = A×65535）を Mitsuba bitmap `raw: True` で地球球体に貼る
+  （uniform_albedo / テクスチャより優先、クロップなし）。
   f_c = MODIS 雲分率（GIBS `MODIS_Terra_Cloud_Fraction_Day`）、α_c = 雲光学的厚さ
-  （`MODIS_Terra_Cloud_Optical_Thickness`）から二流近似 τ(1−g)/(2+τ(1−g))、g=0.85
-  （τ 無しは定数 0.55）、α_atm = 0.07（晴天大気）、α_s = 地表アルベド（既定は
-  BMNG 輝度の較正推定 0.06 + 1.2·(Y − 0.01)、`--surface-source gibs
-  --surface-layer <MODIS MCD43 レイヤ id>` で実データに切替。id は
-  `python earth_albedo_map.py --list-layers Albedo` で確認）。GIBS の科学レイヤは
-  パレット PNG なので `colormaps/v1.3/<layer>.xml` で RGB → 値に逆変換する。
-  タイル・カラーマップ・生成マップは `runs/_gibs_cache/` に永続キャッシュ、
-  sidecar JSON に全球平均アルベド・雲分率等の stats（CERES の 0.29〜0.30 と
-  比較する）。既製マップは `--earth-albedo-map <png>`。**この環境では GIBS が
-  遮断されていたため、取得部はモック（合成タイル + カラーマップ）でのみ検証
-  済み**（`tests/test_earth_albedo_map.py`）。レイヤ id・TileMatrixSet 名
-  （既定 `2km`）が違えば取得失敗 → 雲なしで生成し stats の cloud_source が
-  'none' になるので、実機で最初に `--list-layers Cloud` を確認すること。
-  一様値マップは一様球と 1.5% 以内で一致、半球ごとに 0.12/0.55 のマップで
-  衛星直下の半球の値が出ることを確認済み。
+  （`MODIS_Terra_Cloud_Optical_Thickness`、部分雲画素は `_PCL` レイヤで補完）から
+  二流近似 τ(1−g)/(2+τ(1−g))、g=0.85。α_atm = 0.07（晴天大気）、α_s = 地表
+  アルベド（既定は BMNG 輝度の較正推定 0.06 + 1.2·(Y − 0.01)、`--surface-source gibs
+  --surface-layer MODIS_Combined_L3_White_Sky_Albedo_Daily` で MCD43 実データ
+  〔値は ×1000 の整数、コードで /1000〕に切替）。
+  **GIBS の規約（2026-09-11 実機で確認・修正済み）**: ① カラーマップ id はレイヤ id と
+  別名（例 `MODIS_Cloud_Fraction.xml`、`MODIS_VIIRS_Cloud_Optical_Thickness.xml`）
+  なので GetCapabilities（`runs/_gibs_cache/WMTSCapabilities.xml` にキャッシュ）の
+  `ows:Metadata xlink:role=…colormap/1.3` から解決する。② TileMatrixSet は
+  レイヤごとに違う（雲分率 `2km`、光学的厚さ `1km`、MCD43 `500m`）ので同じく
+  GetCapabilities から自動解決（`--*-tms` 指定が無効なら差し替え）。③ EPSG:4326
+  タイル格子は 2 の冪ではなく level 0 = 640×320 px（0.5625°/px、2×1 タイル）、
+  level 2 = 2560×1280 px（≈15.6 km/px、5×3 タイル・最下段は半分だけ有効）、
+  level 3 = 5120×2560（≈7.8 km/px）。真色経路（relative_motion の level 8 =
+  163840 px）と同一規約。
+  **欠損の扱い**: MODIS Terra のスワース間隙（面積 ~6%、熱帯に斜めの帯）は雲分率を
+  経度方向に周期線形補間（`--no-fill-gaps` で晴天扱い）。雲画素の ~40% は τ 未取得
+  （薄雲・破片雲・高太陽天頂角）なので、その α_c は同じ 10° 緯度帯の τ 取得画素の
+  雲分率重み平均で埋める（`--zonal-band-deg`。定数 `cloud_albedo` 0.55 は τ が全く
+  無い時の最終フォールバック）。stats（sidecar JSON）に `cloud_tau_coverage` /
+  `cloud_gap_filled_area` / `cloud_albedo_fill_global_mean` が出る。
+  **CERES との比較は `global_mean_albedo_insolation_weighted`（日射量×面積重み）で
+  行うこと**（面積平均は低日射の極域の高アルベドを過大評価する）。2026-03-20 の
+  実測: 面積平均 0.377 / 日射量重み 0.343、雲分率 0.71、τ 取得率 0.60。CERES の
+  0.29〜0.30 より 1 割強高く、主因は τ 未取得雲（光学的に薄い側に偏る）を帯平均で
+  埋める上振れと二流近似の垂直入射仮定と考えられる（エネルギー収支の上限側の
+  見積りとして扱う。下限は BMNG テクスチャ地球）。
+  Mitsuba 計測との整合: マップ地球の反太陽セル地球照（Hubble 軌道 t=0: 58.0 W/m²、
+  t=3800 s: 57.1）は独立の格子積分（58.2 / 56.4）と 1.3% 以内、一様 0.3 球も
+  89.6 vs 90.2 で一致（マップの経度向き・GMST 経路込み）。検証スクリプトは
+  `tests/test_earth_albedo_map.py`（モック GIBS）。タイル・カラーマップ・生成マップは
+  `runs/_gibs_cache/` に永続キャッシュ、既製マップは `--earth-albedo-map <png>`。
+  レイヤ id は `python earth_albedo_map.py --list-layers Cloud Albedo` で確認。
 - 地球の熱赤外（~237 W/m²）は PV には効かないので対象外。海面サングリント等の
   非ランバート BRDF は未対応（地球は diffuse）。CARS 実測の Phong フィットは
   参照ツールに定数として収録（単一波長・大気込みなのでアルベドとして使わない）。
