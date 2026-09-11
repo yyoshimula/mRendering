@@ -113,3 +113,66 @@ CERES の惑星アルベドは「反射 / 入射」なので、比較には**日
 - τ 未取得雲のアルベドの根拠（薄雲側への偏り）は文献値で裏取りしていない。CERES 一致を狙うなら、帯平均に対する係数か、MODIS の τ 未取得画素の統計が要る。
 - 二流近似は太陽天頂角依存を持たない。斜め入射で雲アルベドが上がる効果は未考慮。
 - 検証は 1 日付（春分）のみ。至点付近の日射量重みや極夜での挙動は未確認。
+
+## 9. 文献値との比較
+
+今回の値は 2026-03-20 の 1 日分（Terra 10:30 地方時のスナップショット）、文献値は主に年平均であることに注意。緯度帯別の値は最終マップの行平均を日射量重みで帯平均したもの。
+
+| 量 | 今回の値 | 文献値 | 評価 |
+|---|---|---|---|
+| 全球惑星アルベド（日射量重み） | 0.343 | CERES EBAF 年平均 0.293 [1]、熱設計の公称値 0.30 ± 0.05 [7] | +17%。公称値の上限 0.35 と同程度 |
+| 半球差 NH − SH | 0.351 − 0.336 = +0.015 | 長期平均では両半球が 0.001 以内で一致 [1][2] | 1 日分なので差は残ってよい。NH の 45–75°N（0.52–0.64）が高めの主因 |
+| 熱帯 30°S–30°N | 0.28 | CERES 年平均で概ね 0.24–0.26 [1][8] | +0.03。τ 未取得の破片雲を帯平均で埋めた影響が最も出る緯度帯 |
+| 中緯度 30–60° | 0.35–0.53 | 概ね 0.35–0.45。中緯度雲が全球アルベドの最大寄与 [9] | NH 45–60° の 0.53 は高め |
+| 極域 | 南極 0.83 / 北極 75–90°N 0.46 | 極域 0.6–0.7 程度 [1] | 南極は BMNG 由来の地表 0.85 に雲多重反射項が乗って高め。北極は BMNG が海氷を暗く描くため低め |
+| 雲分率 | 0.66（生値）/ 0.71（間隙補間後） | MODIS 雲マスク全球 約 67% [3] | 一致 |
+| τ 未取得の雲画素 | 雲面積の 39% | 海上液相雲で 16%（Aqua C6）。破片積雲・薄雲・高天頂角・サングリントで失敗が集中 [4] | 今回は陸・氷相・高緯度も含むので大きく出る。失敗画素は光学的に薄い側に偏るので、帯平均フィルは上振れ要因 |
+| 雲アルベドの式 | 二流近似 τ(1−g)/(2+τ(1−g))、τ=10 で 0.43 | 斜め入射を含む古典近似 τ/(τ+7.7) では 0.56 | 式自体はむしろ低めなので、超過の原因は式ではなく τ フィルと平面平行 τ の過大評価 [5][6] |
+| 地表側の寄与 | (1−α_atm)²·α_s·(1−f) ≈ 0.04 | 大気側が惑星アルベドの約 9 割、地表が約 0.04 [8] | 桁で整合 |
+| 地球照の局所有効アルベド | 軌道上 3 点で 0.20–0.28 | 短時間の局所アルベドは 0.05–0.6 程度まで振れる [7] | 範囲内 |
+| 反太陽セルの地球照最大 | 278 W/m² | 一様 0.3 球の直下点最大 343–347 W/m²（a·S0·(R/(R+h))²） | 局所アルベド 0.24 相当で整合 |
+
+### 9.1 緯度帯別プロファイル（最終マップ、2026-03-20）
+
+| 緯度帯 | 面積平均 | 日射量重み |
+|---|---|---|
+| 90–75°S | 0.829 | 0.819 |
+| 75–60°S | 0.554 | 0.538 |
+| 60–45°S | 0.462 | 0.460 |
+| 45–30°S | 0.354 | 0.351 |
+| 30–15°S | 0.280 | 0.280 |
+| 15°S–0 | 0.280 | 0.280 |
+| 0–15°N | 0.247 | 0.247 |
+| 15–30°N | 0.328 | 0.326 |
+| 30–45°N | 0.378 | 0.377 |
+| 45–60°N | 0.525 | 0.524 |
+| 60–75°N | 0.638 | 0.642 |
+| 75–90°N | 0.456 | 0.477 |
+| 熱帯 30°S–30°N | 0.283 | 0.282 |
+| 北半球 | 0.384 | 0.351 |
+| 南半球 | 0.371 | 0.336 |
+| 全球 | 0.377 | 0.343 |
+
+### 9.2 解釈
+
+雲分率と緯度構造の大枠は文献と整合し、CERES に対する超過 0.05 は熱帯と北半球中高緯度に集中している。文献から裏づけられる原因は次の 2 点。
+
+- **τ 取得失敗画素の性質**: 失敗は破片雲・薄雲・高太陽天頂角に集中する [4]。同じ緯度帯の成功画素平均（0.37）で埋めると厚すぎる雲を仮定することになる。
+- **平面平行 τ の過大評価**: 1 次元理論の τ 取得は斜め太陽入射や不均一雲で過大になりやすい [5][6]。二流近似は逆に低めなので部分的に相殺されている。
+
+したがって現状のマップは「熱設計の公称上限 0.35 に相当する保守側（上限側）の地球照光源」と位置づけるのが文献上も妥当。CERES に寄せる場合の選択肢は次の 2 つ。
+
+1. τ 未取得画素のフィルを成功画素平均の 6〜7 割にする（根拠として [4] の失敗要因分布を引く）。
+2. CERES SYN1deg の日別 TOA アルベドを直接のスケーリング参照にする（日付ごとの全球平均を合わせる）。
+
+### 9.3 参考文献
+
+1. Stephens, G. L. et al. (2015), The albedo of Earth, *Rev. Geophys.*, 53, 141–163. https://doi.org/10.1002/2014RG000449
+2. Datseris, G. & Stevens, B. (2021), Earth's Albedo and Its Symmetry, *AGU Advances*, 2, e2021AV000440. https://doi.org/10.1029/2021AV000440
+3. King, M. D. et al. (2013), Spatial and Temporal Distribution of Clouds Observed by MODIS Onboard the Terra and Aqua Satellites, *IEEE TGRS*, 51(7), 3826–3852. https://atmosphere-imager.gsfc.nasa.gov/sites/default/files/ModAtmo/King_et_al.2013.pdf
+4. Cho, H.-M. et al. (2015), Frequency and causes of failed MODIS cloud property retrievals for liquid phase clouds over global oceans, *JGR Atmos.*, 120. https://doi.org/10.1002/2015JD023161
+5. Cornet, C. et al. (2005), Case study of inhomogeneous cloud parameter retrieval from MODIS data, *GRL*, 32, L13807. https://doi.org/10.1029/2005GL022791
+6. Liang, L. & Di Girolamo, L. (2013), A global analysis on the view-angle dependence of plane-parallel oceanic liquid water cloud optical thickness using MISR and MODIS, *JGR Atmos.*, 118. https://doi.org/10.1029/2012JD018201
+7. Anderson, B. J. et al. (2001), Guidelines for the Selection of Near-Earth Thermal Environment Parameters for Spacecraft Design, NASA/TM-2001-211221. https://ntrs.nasa.gov/api/citations/20020004360/downloads/20020004360.pdf
+8. Donohoe, A. & Battisti, D. S. (2011), Atmospheric and surface contributions to planetary albedo, *J. Climate*, 24, 4402–4418. https://atmos.uw.edu/~david/donohoe_battisti_albedo_final.pdf
+9. Cloud effects on Earth's albedo via midlatitude baroclinic activity, *PNAS* (2023). https://doi.org/10.1073/pnas.2208778120
