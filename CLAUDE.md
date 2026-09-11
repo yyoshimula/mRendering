@@ -204,6 +204,56 @@ relative はフレームごとの `mi.load_dict`（シーンパース・BVH・�
   最終実測（absolute 640×480 cuda）: 定常 **0.25 s/frame**（元 2.2 の ~9 倍）、
   20 フレーム通し 38→19.5 s、1024spp でも 1.5 s/frame。
 
+### 太陽電池パネルの入射照度・発電量（relative の PV 計測、`pv_irradiance.py`）
+
+relative verb でパネルを 1 枚でも指定すると、フレームごとに受光面の放射照度を
+**直達 / 地球照 / その他** に分けて `runs/<run>/pv_irradiance.csv` に書く
+（画像レンダと同時。列: frame, t_s, panel, host, area_m2, nu, cos_sun,
+sun_visible, e_direct_wm2, e_earth_wm2, e_other_wm2, e_total_wm2, p_w,
+e_earth_{r,g,b}_wm2）。発電量は P = η·A·E_total（`pv_efficiency`、既定 0.30）。
+
+```bash
+# Hubble 軌道 1 周・LVLH 姿勢・仮想パネル 2 翼（BMNG 地球の地球照込み）
+python mrender.py relative --config presets/pv_hubble_orbit.yaml
+# 一様アルベド 0.3 のランバート球で概算 / 当日の実写雲分布（GIBS）で計算
+python mrender.py relative --config presets/pv_hubble_orbit.yaml --earth-uniform-albedo 0.3
+python mrender.py relative --config presets/pv_hubble_orbit.yaml --earth-gibs
+# 解析参照（Mitsuba 不要）: 単一 BRDF 球の地球照を格子積分
+python tools/pv_earthshine_reference.py --altitude-km 550 --sun-zenith-deg 0 60
+```
+
+- **パネル指定**: YAML `pv_panels:`（list[dict]: name / host / center [m 機体系] /
+  normal / up / size [m] / efficiency / bsdf）で仮想矩形パネル（片面受光、画にも
+  出る）、`pv_parts:` で OBJ パーツ全体を受光面に（閉じたメッシュは表裏全フェイス
+  平均になるので薄板は半分程度に出る）、CLI 単一パネルは `--pv-panel-size W H`
+  + `--pv-panel-center/normal/up`。手続き生成の既定衛星は km 級なので、その内部に
+  パネルを置くと全遮蔽で 0 になる（実モデルか機体外の位置を使うこと）。
+- **仕組み**: 間接光は Mitsuba `irradiancemeter`（シェイプ入れ子、1×1 film に
+  ∫L cosθ dω がそのまま出る）。**directional 太陽は irradiancemeter に写らない**
+  （センサ位置で NEE が走らない、実測 0）ので直達は解析: E_direct =
+  S0·ν·⟨max(0,n·ŝ)·vis⟩、vis は `scene.ray_test` による自己遮蔽。地球照は
+  「地球を反射率 0 の黒体にした同一シーン」との差分（地球を外すと地球に隠れる
+  はずの環境光が下半球から入り −6% になる）。環境光は既定で計測から除外
+  （既定フィル光 0.02 は可視化用 ≈ 18 W/m²。`--pv-include-env` で含める）。
+- **単位換算**: E_phys = S0_wm2 · lum(E_rgb)/lum(sun_rgb)（Rec.709 輝度、groundobs と
+  同じ規約）。RGB 3 帯域の可視近似で、NIR 域（植生 0.4〜0.5、海 ≈ 0）は含まれない
+  → Si/3 接合セルの応答域に対して地球照は過小になりうる（spectral バリアントは
+  将来課題）。`pv_sun_irradiance_wm2` はレンダ単位 `sun_irradiance` とは独立。
+- **検証済み**: 一様ランバート球（0.3、550 km）で Mitsuba 計測 vs 格子積分
+  （`tools/pv_earthshine_reference.py`、Fankhauser+2023 Lumos 由来）が太陽直下
+  343 W/m²・天頂角 60° で 172 W/m² と 0.3% 以内で一致、簡易式 a·S0·(R/(R+h))²
+  = 346 は縁の減光ぶん 1% 過大。直達は cos30°×遮蔽 50% を 1% 以内で再現
+  （`tests/test_pv_irradiance.py`）。`--jobs N` はチャンク CSV を親が結合する。
+- **地球モデルで地球照は桁で変わる**: BMNG テクスチャ地球は雲なし合成画像を
+  sRGB→リニア変換した反射率（海 ~0.02、陸 ~0.1）なので地球照は下限値
+  （同一姿勢・時刻で一様 0.3 球 185 W/m² に対し BMNG 5.5 W/m²）。エネルギー収支
+  目的では `earth_uniform_albedo: 0.3`（雲込み全球平均、CERES）を使う。GIBS
+  実写は当日の雲を含むが表示用画像で放射量校正はない。文献上、惑星アルベドの
+  約 9 割は雲（Donohoe & Battisti 2011）で、地表の海陸差は 1 割程度。
+- 地球の熱赤外（~237 W/m²）は PV には効かないので対象外。海面サングリント等の
+  非ランバート BRDF は未対応（地球は diffuse）。CARS 実測の Phong フィットは
+  参照ツールに定数として収録（単一波長・大気込みなのでアルベドとして使わない）。
+
 ### 実行（relative: 2 機の相対配置 + 絶対軌道モード）
 
 `relative` verb (`relative_motion.py`) も専用 CLI フラグを持つ（`--mode`, `--rel-position`, `--rel-quat`, `--rel-csv`, `--frames`, `--wx` など）。
@@ -397,6 +447,7 @@ ffmpeg -framerate 30 -i runs/<RUN>/frames/frame_%04d.png \
 - **simple_rotation.py** - rotation のコア：オイラー回転運動方程式、クォータニオン姿勢、OBJパーツ別BSDF（軌道なし）
 - **relative_motion.py** - relative のコア：相対位置・相対姿勢で 2 機を配置（軌道なし、static/csv/tumble モード、地球背景・太陽・星空のフォトリアル環境オプション付き）
 - **ground_observation.py** - groundobs のコア：地上望遠鏡観測（WGS-84 地上局 + GMST + VSOP87 太陽 + TLE/SGP4 + 絶対測光 + 屈折 + シーイング PSF + 恒星背景 + 追尾モード + CCD ノイズ。build_context / render_observation_frame を live_worker と共用）
+- **pv_irradiance.py** - relative の PV 計測：受光面（仮想矩形 / OBJ パーツ）の直達（解析 + レイキャスト遮蔽）・地球照（irradiancemeter、地球黒体差分）・発電量を CSV 出力。解析参照は `tools/pv_earthshine_reference.py`（Lumos 由来の格子積分）
 - **gui_server.py / gui/index.html** - ブラウザ GUI（標準ライブラリ HTTP サーバー + 単一 HTML）。設定フォーム→YAML 生成→verb サブプロセス起動→進捗表示
 - **verbs/** - mrender サブコマンドのシム
 - **scene_common.py** - relative/rotation 共有のシーン部品・姿勢伝播（propagate_attitude / create_axes / create_satellite / split_obj_by_parts〔(path,mtime) キャッシュ内蔵〕/ load_model_with_parts）。**唯一の実装**で、両 verb は再エクスポート

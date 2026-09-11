@@ -1,0 +1,134 @@
+# 太陽電池パネルの入射照度・発電量（PV 計測）: Hubble 軌道 1 周
+#
+# シチュエーション:
+#   Hubble 級の軌道（高度 ~535 km、i=28.5°）を absolute モードで 1 周伝播し、
+#   deputy（Hubble モデル、太陽指向の慣性固定姿勢）に取り付けた仮想パネル
+#   3 枚についてフレームごとに
+#     直達 (食 ν・入射角・自己遮蔽込み) / 地球照 (BMNG 地球の反射) /
+#     その他 (機体パーツ間の相互反射) [W/m²] と 発電量 P = η·A·E_total [W]
+#   を runs/<run>/pv_irradiance.csv に出力する。画像は chief 視点の連番。
+#   - wing_±x  : 太陽電池アレイ 2 翼（法線 −z = 太陽方向。直達 ≈ 1361·ν、
+#                地球照は地球が視野の縁に来る明暗境界付近で最大）
+#   - aft_cell : 反太陽側（+z）の 1 m² セル。直達 0 で地球照のみ受ける
+#                （軌道正午に地球が正面 → 地球照の上限を見る参照面）
+#
+# 使用:
+#   python mrender.py relative --config presets/pv_hubble_orbit.yaml
+#
+# 地球モデルの選択（発電量にはここが効く）:
+#   既定は earth_uniform_albedo: 0.3（雲込み全球平均アルベドのランバート球、
+#   CERES/Stephens 2015 の 0.29〜0.30）。BMNG テクスチャ地球（earth_uniform_albedo
+#   を空にする）は雲なし合成画像を sRGB→リニア変換した反射率なので海域が
+#   ~0.02 と暗く、地球照が 5〜30 倍小さい下限値になる（同一時刻の反太陽セル:
+#   一様 0.3 → 185 W/m²、BMNG → 5.5 W/m²）。当日の実写雲分布で見るなら
+#   environment.earth_gibs: true（NASA GIBS、要ネットワーク。ただし表示用
+#   画像で放射量校正はされていない）。
+#
+# 注意: rel_quat は「start_time 時点の RTN に対する初期姿勢」なので、
+#   --start-time を変えると同じ rel_quat でも慣性姿勢が変わる（太陽指向で
+#   なくなる）。部分レンダには --jobs か --frame-start/--frame-end を使うこと。
+#
+# 座標: シーン = chief 中心 RTN [km]（x=R, y=T, z=N）。deputy 姿勢は
+#   tumble + ω=0（= 慣性固定）で、rel_quat は「t=0 の RTN に対する初期姿勢」。
+#   下の値は 2026-03-20T12:00 UTC・Ω=60°・M0=0 で機体 −z が太陽方向
+#   （ECI ≈ +x）を向くよう計算したもの（エポック/軌道要素を変えたら要再計算:
+#   A(rel_q) = A_eci2body · A_i2rtn(t0)）。モデルの太陽電池アレイは機体 xy
+#   平面（z ≈ −0.7 m）に広がり、受光面法線は −z（開口部の反対側）とした。
+#   実機の SA3 は 2.5 m × 7.1 m × 2 翼。
+
+rendering:
+  frames: 90
+  duration_sec: 5700       # ≈ 1 周期（a=6913 km）→ dt ≈ 63 s
+  width: 640
+  height: 480
+  samples: 64
+  make_video: false
+
+mode: absolute
+
+orbit:
+  epoch_utc: '2026-03-20T12:00:00'   # 春分（太陽 ≈ 赤道面）
+  chief_oe:  [6913.137, 0.0003, 28.47, 60.0, 0.0, 0.0]
+  deputy_oe: [6913.137, 0.0003, 28.47, 60.0, 0.0, 0.0004]   # 約 50 m 前方
+  deputy_attitude: tumble        # ω=0 → 慣性固定（太陽指向を保つ）
+
+dynamics:
+  Ix: 36000.0
+  Iy: 87000.0
+  Iz: 93000.0
+  wx: 0.0
+  wy: 0.0
+  wz: 0.0
+
+deputy:
+  rel_quat: [-0.131865, 0.830001, 0.494526, -0.221707]   # 機体 −z → 太陽（t=0）
+  deputy_model: models/hubble.obj
+  deputy_scale: 0.001
+  deputy_parts:
+    hbltel_1:
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_1.png}
+      metallic: 0.35
+      roughness: 0.35
+    hbltel_2:
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_2.png}
+      metallic: 0.1
+      roughness: 0.5
+    hbltel_3:
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_3.png}
+      metallic: 0.85
+      roughness: 0.28
+    hbltel_4:
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_4.png}
+      metallic: 0.7
+      roughness: 0.35
+    hbltel_wfc_1:
+      type: principled
+      base_color: {type: bitmap, filename: models/hubble_textures/hbltel_w.png}
+      metallic: 0.2
+      roughness: 0.45
+
+pv:
+  pv_host: deputy
+  pv_efficiency: 0.30            # 3 接合 GaAs 級
+  pv_sun_irradiance_wm2: 1361.0
+  pv_samples: 16384
+  pv_direct_samples: 4096
+  pv_panels:
+    - name: wing_plus_x
+      center: [3.9, 0.0, -0.80]   # 機体系 [m]
+      normal: [0.0, 0.0, -1.0]
+      up: [0.0, 1.0, 0.0]
+      size: [2.5, 7.1]
+    - name: wing_minus_x
+      center: [-3.9, 0.0, -0.80]
+      normal: [0.0, 0.0, -1.0]
+      up: [0.0, 1.0, 0.0]
+      size: [2.5, 7.1]
+    - name: aft_cell               # 反太陽側の参照セル（地球照のみ）
+      center: [0.0, 0.0, 6.6]
+      normal: [0.0, 0.0, 1.0]
+      up: [0.0, 1.0, 0.0]
+      size: [1.0, 1.0]
+
+camera:
+  camera_mode: chief_to_deputy
+  camera_fov: 30.0
+  camera_body_up: [0.0, 0.0, 1.0]
+
+environment:
+  hide_chief: true
+  show_earth: true
+  earth_uniform_albedo: 0.3      # 空欄にすると BMNG テクスチャ地球（地球照は下限値）
+  earth_texture: earth_texture.jpg
+  sun_irradiance: 4.5
+  sun_temperature: 5778.0
+  env_brightness: 0.0            # 宇宙は黒（PV 計測は既定で環境光を除外するが画も合わせる）
+  max_depth: 8
+
+visualization:
+  show_inertial_axes: false
+  show_body_axes: false

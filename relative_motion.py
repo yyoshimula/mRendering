@@ -665,8 +665,13 @@ def create_earth_backdrop(chief_pos, direction, altitude_km: float,
                           gibs_layer: str = 'MODIS_Terra_CorrectedReflectance_TrueColor',
                           gibs_date: Optional[str] = None,
                           orientation: Optional[np.ndarray] = None,
-                          analytic_sphere: bool = False) -> dict:
+                          analytic_sphere: bool = False,
+                          uniform_albedo: Optional[float] = None) -> dict:
     """chief 近傍シーン（km 単位）に地球球体を背景として置く。
+
+    uniform_albedo を与えるとテクスチャの代わりに一様反射率のランバート球に
+    する（クロップ・GIBS は無効）。PV 計測の解析検証や「雲込み平均アルベド
+    0.3 の地球」の概算用。
 
     シーン座標は chief 中心の RTN(Hill) frame 想定なので、`direction` に
     [0,0,-1]（-N 方向 = 地心方向）などを与えると chief の高度 `altitude_km`
@@ -707,6 +712,10 @@ def create_earth_backdrop(chief_pos, direction, altitude_km: float,
     # として 0 から積む。未指定時は従来どおりユーザ指定の自転角
     rot_deg = 0.0 if orientation is not None else float(rotation_deg)
     reflectance = {'type': 'bitmap', 'filename': texture}
+    if uniform_albedo is not None:
+        a = float(uniform_albedo)
+        reflectance = {'type': 'rgb', 'value': [a, a, a]}
+        crop = False
 
     if crop:
         # chief 直下点（キャップ中心）を元の local frame（rotation_deg 適用後）で表す
@@ -1022,6 +1031,7 @@ def build_environment(args: argparse.Namespace, chief_pos: np.ndarray
             gibs_layer=str(getattr(args, 'earth_gibs_layer', None)
                            or 'MODIS_Terra_CorrectedReflectance_TrueColor'),
             gibs_date=getattr(args, 'earth_gibs_date', None),
+            uniform_albedo=getattr(args, 'earth_uniform_albedo', None),
         )
     return sun_rgb, env_dict, earth_dict
 
@@ -1195,6 +1205,7 @@ class AbsoluteOrbitContext:
                 gibs_date=getattr(args, 'earth_gibs_date', None),
                 orientation=ecef2scene,
                 analytic_sphere=bool(getattr(args, 'earth_analytic_sphere', False)),
+                uniform_albedo=getattr(args, 'earth_uniform_albedo', None),
             )
         return nu, sun_dir_scene, ecef2scene, earth_dict
 
@@ -1422,9 +1433,14 @@ class PersistentScene:
         self.updates += 1
 
     # --- 入口 --------------------------------------------------------------
-    def render(self, scene_dict: dict):
+    def sync(self, scene_dict: dict) -> Tuple[float, float]:
+        """scene_dict の内容を self.scene に反映する（初回は構築、以後は差分更新）。
+
+        戻り値は (diff 所要秒, apply/build 所要秒)。PV 計測など「画像レンダ
+        以外のセンサ」を同じシーンで走らせたい呼び出し側は、sync 後に
+        self.scene を直接使う。
+        """
         import time as _time
-        timing = os.environ.get('MRENDER_TIMING')
         t0 = _time.perf_counter()
         if self.scene is None:
             self._build(scene_dict)
@@ -1451,14 +1467,21 @@ class PersistentScene:
                     self._build(scene_dict)
             t2 = _time.perf_counter()
         self.prev = scene_dict
+        return t1 - t0, t2 - t1
+
+    def render(self, scene_dict: dict):
+        import time as _time
+        timing = os.environ.get('MRENDER_TIMING')
+        t_diff, t_apply = self.sync(scene_dict)
+        t2 = _time.perf_counter()
         image = mi.render(self.scene)
         if timing:
             import drjit as _dr
             _dr.eval(image)
             _dr.sync_thread()
             t3 = _time.perf_counter()
-            print(f'    [timing] diff={t1 - t0:.3f}s '
-                  f'apply/build={t2 - t1:.3f}s render={t3 - t2:.3f}s',
+            print(f'    [timing] diff={t_diff:.3f}s '
+                  f'apply/build={t_apply:.3f}s render={t3 - t2:.3f}s',
                   file=sys.stderr)
         return image
 
@@ -1512,8 +1535,33 @@ def _run_parallel(args: argparse.Namespace, jobs: int) -> None:
             failed.append((a, b, p.returncode))
     if failed:
         raise RuntimeError(f'並列チャンクが失敗しました: {failed}')
+    # PV 計測 CSV はチャンクごとの部分ファイルをフレーム順に結合する
+    csv_path = _pv_csv_path(args, output_dir)
+    parts = sorted(csv_path.parent.glob(csv_path.stem + '.part*.csv'))
+    if parts:
+        from pv_irradiance import merge_csv_parts
+        merge_csv_parts([str(p) for p in parts], str(csv_path))
+        for p in parts:
+            p.unlink()
+        print(f'PV 計測 CSV: {csv_path}')
     print(f'並列レンダ完了: {args.frames} frames / {_time.time() - t0:.1f}s '
           f'({n} プロセス) → {output_dir}/')
+
+
+def _pv_csv_path(args: argparse.Namespace, output_dir: Path,
+                 frame_start: Optional[int] = None) -> Path:
+    """PV 計測 CSV の置き場。
+
+    mrender 経由（output_dir = runs/<run>/frames）ならラン直下、
+    スタンドアロンなら output_dir 直下。--jobs のチャンクは
+    `<name>.part<frame_start>.csv` に書き、親が結合する。
+    """
+    name = str(getattr(args, 'pv_csv_name', None) or 'pv_irradiance.csv')
+    base = output_dir.parent if output_dir.name == 'frames' else output_dir
+    if frame_start is not None:
+        stem, dot, ext = name.rpartition('.')
+        name = f'{stem or ext}.part{int(frame_start):04d}.{ext if stem else "csv"}'
+    return base / name
 
 
 def _run(args: argparse.Namespace) -> None:
@@ -1644,6 +1692,30 @@ def _run(args: argparse.Namespace) -> None:
                   and (frame_end - frame_start) > 1)
     pscene = PersistentScene() if persistent else None
 
+    # --- 太陽電池パネル入射照度（pv_irradiance）---
+    # パネル指定があればフレームごとに直達/地球照/その他を計測して CSV へ。
+    # 計測は画像用シーンとは別の 2 シーン（地球込み / 地球黒体。既定で
+    # 環境光なし）で行い、地球照はその差分。永続シーン時はそれぞれ
+    # PersistentScene を持つ（構築は初回のみ、テクスチャ実体は画像用と共有）。
+    from pv_irradiance import (PvCsvWriter, add_pv_sensors, format_summary,
+                               measure_panels, panels_from_args, pv_scene_dicts)
+    pv_panels = panels_from_args(args)
+    pv_writer = None
+    pscene_pv = (None, None)
+    pv_include_env = bool(getattr(args, 'pv_include_env', False))
+    if pv_panels:
+        csv_path = _pv_csv_path(args, output_dir,
+                                frame_start if is_chunk else None)
+        pv_writer = PvCsvWriter(csv_path)
+        if persistent:
+            pscene_pv = (PersistentScene(), PersistentScene())
+        print(f"  PV 計測: {len(pv_panels)} 面 "
+              f"({', '.join(p.name + '@' + p.host for p in pv_panels)}) "
+              f"→ {csv_path}")
+        print(f"    太陽定数 {float(args.pv_sun_irradiance_wm2):.0f} W/m², "
+              f"η={float(args.pv_efficiency):.2f}, "
+              f"spp={int(args.pv_samples)} / 直達 {int(args.pv_direct_samples)} 点")
+
     _timing = os.environ.get('MRENDER_TIMING')
     import time as _time
 
@@ -1704,7 +1776,12 @@ def _run(args: argparse.Namespace) -> None:
             camera_offset=args.camera_offset, camera_direction=args.camera_direction,
             camera_body_up=args.camera_body_up,
         )
+        if pv_panels:
+            add_pv_sensors(scene_dict, pv_panels,
+                           {'chief': chief_xform, 'deputy': deputy_xform},
+                           int(args.pv_samples))
         _t2 = _time.perf_counter()
+        from asset_cache import preload_bitmaps, share_bsdf_textures
         if pscene is not None:
             # 永続シーン: 初回のみ構築、以後は差分パラメータ更新でレンダ
             image = pscene.render(scene_dict)
@@ -1713,17 +1790,44 @@ def _run(args: argparse.Namespace) -> None:
             # （BSDF テクスチャは実体共有、envmap 等は Bitmap キャッシュ。
             #  live_worker のリファインパスと同一経路になり、ライブ⇔バッチの
             #  ピクセル一致が構成上保証される）
-            from asset_cache import preload_bitmaps, share_bsdf_textures
             scene = mi.load_dict(preload_bitmaps(share_bsdf_textures(scene_dict)))
             image = mi.render(scene)
 
         _t3 = _time.perf_counter()
         output_path = output_dir / f'frame_{frame:04d}.png'
         mi.util.write_bitmap(str(output_path), image)
+
+        pv_note = ''
+        if pv_panels:
+            pv_full_dict, pv_black_dict = pv_scene_dicts(scene_dict, pv_include_env)
+            has_earth = 'earth' in scene_dict
+            if pscene is not None:
+                pscene_pv[0].sync(pv_full_dict)
+                scene_pv_full = pscene_pv[0].scene
+                scene_pv_black = None
+                if has_earth:
+                    pscene_pv[1].sync(pv_black_dict)
+                    scene_pv_black = pscene_pv[1].scene
+            else:
+                scene_pv_full = mi.load_dict(preload_bitmaps(share_bsdf_textures(pv_full_dict)))
+                scene_pv_black = (mi.load_dict(preload_bitmaps(share_bsdf_textures(pv_black_dict)))
+                                  if has_earth else None)
+            sd = np.asarray(frame_sun_direction, dtype=float)
+            sun_dir_scene_frame = -sd / np.linalg.norm(sd)
+            measurements = measure_panels(
+                scene_pv_full, scene_pv_black, pv_panels,
+                sun_dir_scene=sun_dir_scene_frame,
+                sun_rgb_frame=frame_sun_rgb, sun_rgb_base=sun_rgb,
+                s0_wm2=float(args.pv_sun_irradiance_wm2),
+                nu=float(nu) if nu is not None else 1.0,
+                spp=int(args.pv_samples),
+                direct_samples=int(args.pv_direct_samples), seed=frame)
+            pv_writer.write(frame, t, measurements)
+            pv_note = '\n        PV ' + format_summary(measurements)
         if _timing:
             _t4 = _time.perf_counter()
             print(f'    [timing] env/state={_t1 - _t0:.3f}s dict={_t2 - _t1:.3f}s '
-                  f'pscene={_t3 - _t2:.3f}s write={_t4 - _t3:.3f}s',
+                  f'pscene={_t3 - _t2:.3f}s write+pv={_t4 - _t3:.3f}s',
                   file=sys.stderr)
 
         rel_dist = float(np.linalg.norm(rel_pos))
@@ -1731,13 +1835,17 @@ def _run(args: argparse.Namespace) -> None:
         print(f"  [{frame+1:3d}/{args.frames}] t={t:.3f}s  "
               f"|r_rel|={rel_dist:.3f}  "
               f"q_rel=[{rel_q[0]:.3f},{rel_q[1]:.3f},{rel_q[2]:.3f},{rel_q[3]:.3f}]"
-              f"{nu_note}  → {output_path}")
+              f"{nu_note}  → {output_path}{pv_note}")
 
         # tumble（および absolute の deputy_attitude=tumble）のみ次フレームへ姿勢伝播
         if args.mode == 'tumble' or (
                 abs_ctx is not None and abs_ctx.deputy_attitude == 'tumble'):
             q_dep, w_dep = propagate_attitude(q_dep, w_dep, I_body, I_inv, dt)
 
+    if pv_writer is not None:
+        pv_writer.close()
+        if not is_chunk:
+            print(f"\nPV 計測 CSV: {pv_writer.path}")
     if pscene is not None:
         print(f"\n永続シーン: 構築 {pscene.rebuilds} 回 / 差分更新 {pscene.updates} 回")
     print(f"\n完了！ 動画にするには:")

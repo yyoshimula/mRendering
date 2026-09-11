@@ -235,6 +235,43 @@ def build_relative_parser() -> argparse.ArgumentParser:
                              '（未指定時は従来の淡い定数環境光）')
     parser.add_argument('--starfield', type=str, default=None,
                         help='星空 envmap (EXR) のパス（例: assets/starfield.exr）')
+    parser.add_argument('--earth-uniform-albedo', type=float, default=None,
+                        help='指定時は地球をテクスチャ無しの一様ランバート球（反射率 = この値）'
+                             'にする。PV 計測の解析検証・雲なし平均アルベド (~0.3) の'
+                             '概算用。クロップ/GIBS は無効になる')
+
+    # 太陽電池パネル入射照度・発電量（pv_irradiance.py）。パネルを 1 枚でも
+    # 指定するとフレームごとに直達/地球照/その他を計測して CSV に書く。
+    # 複数パネルは YAML の `pv_panels:`（list[dict]）で指定する。
+    parser.add_argument('--pv-parts', nargs='*', type=str, default=None,
+                        help='受光面とみなす OBJ パーツ名（pv_host のモデル）。'
+                             '閉じたメッシュは表裏全フェイスで平均される')
+    parser.add_argument('--pv-host', choices=['deputy', 'chief'], default='deputy',
+                        help='パネルを取り付ける機体（CLI 単一パネル / pv_parts 用）')
+    parser.add_argument('--pv-panel-size', nargs=2, type=float, default=None,
+                        metavar=('W_M', 'H_M'),
+                        help='仮想矩形パネルの幅・高さ [m]。指定すると 1 枚追加する')
+    parser.add_argument('--pv-panel-center', nargs=3, type=float, default=[0.0, 0.0, 0.0],
+                        help='仮想パネル中心（機体系 [m]）')
+    parser.add_argument('--pv-panel-normal', nargs=3, type=float, default=[0.0, 0.0, 1.0],
+                        help='仮想パネル受光面の法線（機体系、片面受光）')
+    parser.add_argument('--pv-panel-up', nargs=3, type=float, default=[0.0, 1.0, 0.0],
+                        help='仮想パネル面内の上方向（機体系、見た目のみ）')
+    parser.add_argument('--pv-panel-name', type=str, default='panel',
+                        help='仮想パネルの名前（CSV の panel 列）')
+    parser.add_argument('--pv-efficiency', type=float, default=0.30,
+                        help='発電効率 η（P = η·A·E_total）。3 接合 GaAs ≈ 0.30、Si ≈ 0.2')
+    parser.add_argument('--pv-samples', type=int, default=16384,
+                        help='irradiancemeter のパス数/フレーム（間接光の積分精度）')
+    parser.add_argument('--pv-direct-samples', type=int, default=4096,
+                        help='直達光の遮蔽判定に使うパネル上のサンプル点数')
+    parser.add_argument('--pv-sun-irradiance-wm2', type=float, default=1361.0,
+                        help='物理換算に使う太陽定数 [W/m²]（レンダ単位 sun_irradiance とは独立）')
+    parser.add_argument('--pv-csv-name', type=str, default='pv_irradiance.csv',
+                        help='出力 CSV 名（run ディレクトリ直下）')
+    parser.add_argument('--pv-include-env', action='store_true', default=False,
+                        help='環境光（envmap / 定数フィル光）も PV 計測に含める。'
+                             '既定は除外（relative の既定環境光は可視化用で物理量でないため）')
 
     # 動画化
     parser.add_argument('--make-video', action='store_true', default=False,
