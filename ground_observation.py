@@ -400,6 +400,29 @@ def project_to_grid(direction: np.ndarray, basis: CameraBasis,
 # ---------------------------------------------------------------------------
 # レンダリング（代理距離 + flux 保存の再標本化）
 # ---------------------------------------------------------------------------
+def earth_backdrop_at(args: argparse.Namespace, g: 'FrameGeometry') -> dict:
+    """物体（原点）から見た地球球体の Mitsuba 辞書（ECI 系 [km]、GMST 姿勢）。
+
+    relative の create_earth_backdrop を流用: 地心方向 = −r̂_obj、高度 =
+    |r_obj| − R、ECEF→ECI = Rz(GMST)。--earth-texture 指定時はテクスチャ地球
+    （可視域クロップ）、未指定なら一様ランバート球（earth_uniform_albedo）。
+    PV 計測の地球照の光源、および --earthshine 時の観測像の照り返しに使う。
+    """
+    from relative_motion import create_earth_backdrop
+    dist = float(np.linalg.norm(g.r_obj))
+    direction = (-g.r_obj / dist).tolist()
+    texture = getattr(args, 'earth_texture', None)
+    albedo = getattr(args, 'earth_uniform_albedo', None)
+    if not texture and albedo is None:
+        albedo = 0.3
+    return create_earth_backdrop(
+        [0.0, 0.0, 0.0], direction, dist - EARTH_RADIUS_KM,
+        str(texture or 'earth_texture.jpg'),
+        orientation=rot_z(g.theta),
+        uniform_albedo=None if texture else float(albedo),
+    )
+
+
 def render_target_irradiance(args: argparse.Namespace,
                              basis: CameraBasis,
                              range_km: float,
@@ -408,8 +431,14 @@ def render_target_irradiance(args: argparse.Namespace,
                              body_to_world: mi.ScalarTransform4f,
                              bound_radius_km: float,
                              pristine_rad: float,
-                             samples: int) -> Tuple[np.ndarray, int, float]:
+                             samples: int,
+                             extra_objects: Optional[dict] = None
+                             ) -> Tuple[np.ndarray, int, float]:
     """ターゲットをレンダし、ピクセルごとの開口面照度 E_ij [W/m²] を返す。
+
+    extra_objects は追加シェイプ（--earthshine の地球球体など）。カメラの
+    far_clip は代理距離基準なので地球は画に写らないが、物体→地球→太陽の
+    パスは far_clip と無関係に辿られ、照り返しだけが測光に乗る。
 
     Returns:
         (E_img (N,N,3) [W/m²], N, theta_span_rad):
@@ -456,6 +485,8 @@ def render_target_irradiance(args: argparse.Namespace,
         # envmap なし: 深宇宙背景は 0（測光のゼロ点を汚さない）
     }
     scene_dict.update(build_target_objects(args, body_to_world))
+    if extra_objects:
+        scene_dict.update(extra_objects)
 
     from asset_cache import preload_bitmaps, share_bsdf_textures
     scene = mi.load_dict(preload_bitmaps(share_bsdf_textures(scene_dict)))
@@ -1227,10 +1258,12 @@ def render_observation_frame(args: argparse.Namespace, ctx: ObservationContext,
             m4[:3, :3] = r_b2i
             body_xform = mi.ScalarTransform4f(m4)
             sun_dir = g.sun_pos / np.linalg.norm(g.sun_pos)
+            earth_objs = (earth_backdrop_at(args, g)
+                          if getattr(args, 'earthshine', False) else None)
             e_img, n_render, theta_span = render_target_irradiance(
                 args, basis, g.range_km, (-sun_dir).copy(),
                 ctx.sun_rgb_base * g.nu, body_xform, ctx.bound_radius_km,
-                pristine_rad, spp)
+                pristine_rad, spp, extra_objects=earth_objs)
 
             # 測光: PSF・視野切り出しの前に全 flux を積分（大気圏外の値）
             e_total_lum = float(_luminance(e_img.sum(axis=(0, 1))))
@@ -1320,6 +1353,50 @@ def render_observation_frame(args: argparse.Namespace, ctx: ObservationContext,
 
 
 # ---------------------------------------------------------------------------
+# 太陽電池パネル入射照度（pv_irradiance と共用）
+# ---------------------------------------------------------------------------
+def measure_pv_frame(args: argparse.Namespace, ctx: ObservationContext,
+                     frame: int, panels) -> list:
+    """フレームの PV 計測（直達 / 地球照 / その他）。観測者の可視性とは無関係。
+
+    シーン = ECI 系・物体原点 [km]。太陽は ν を掛けない物理値（地球の昼側は
+    物体の食と無関係に照らされる。物体への直達は解析の ν、機体相互反射は
+    シーン内の地球球体が幾何学的に遮る）。地球は earth_backdrop_at。
+    """
+    from pv_irradiance import add_pv_sensors, measure_panels, pv_scene_dicts
+    from asset_cache import preload_bitmaps, share_bsdf_textures
+
+    t = ctx.t_start + frame * ctx.dt
+    g = geometry_at(ctx, t)
+    r_b2i = attitude_at(ctx, args, frame, t, g)
+    m4 = np.eye(4)
+    m4[:3, :3] = r_b2i
+    body_xform = mi.ScalarTransform4f(m4)
+    sun_dir = g.sun_pos / np.linalg.norm(g.sun_pos)
+
+    scene_dict = {
+        'type': 'scene',
+        'integrator': {'type': 'path', 'max_depth': int(args.max_depth)},
+        'sun': {
+            'type': 'directional',
+            'direction': (-sun_dir).tolist(),
+            'irradiance': {'type': 'rgb', 'value': ctx.sun_rgb_base.tolist()},
+        },
+    }
+    scene_dict.update(build_target_objects(args, body_xform))
+    scene_dict.update(earth_backdrop_at(args, g))
+    add_pv_sensors(scene_dict, panels, {'target': body_xform}, int(args.pv_samples))
+    scenes = [mi.load_dict(preload_bitmaps(share_bsdf_textures(d)))
+              for d in pv_scene_dicts(scene_dict)]
+    return measure_panels(
+        scenes[0], scenes[1], scenes[2], panels,
+        sun_dir_scene=sun_dir, sun_rgb_frame=ctx.sun_rgb_base * g.nu,
+        sun_rgb_base=ctx.sun_rgb_base, s0_wm2=ctx.s0, nu=g.nu,
+        spp=int(args.pv_samples), direct_samples=int(args.pv_direct_samples),
+        seed=frame)
+
+
+# ---------------------------------------------------------------------------
 # メインループ
 # ---------------------------------------------------------------------------
 def _run(args: argparse.Namespace) -> None:
@@ -1328,6 +1405,13 @@ def _run(args: argparse.Namespace) -> None:
     csv_path = Path(getattr(args, 'csv_path', None) or (output_dir / 'observation.csv'))
 
     ctx = build_context(args)
+
+    from pv_irradiance import PvCsvWriter, format_summary, panels_from_args
+    pv_panels = panels_from_args(args, hosts=('target',))
+    pv_writer = None
+    if pv_panels:
+        pv_csv = csv_path.parent / str(getattr(args, 'pv_csv_name', None) or 'pv_irradiance.csv')
+        pv_writer = PvCsvWriter(pv_csv)
 
     print('地上望遠鏡観測シミュレーション (groundobs)')
     print(f"  エポック: JD {ctx.jd0:.5f} ({args.epoch_utc})")
@@ -1367,6 +1451,13 @@ def _run(args: argparse.Namespace) -> None:
               f"QE={args.quantum_efficiency}, 空 {args.sky_mag_arcsec2} mag/arcsec²")
     print(f"  時間軸: dt={ctx.dt:.3f} s × {args.frames} フレーム "
           f"(start={ctx.t_start:.1f} s, 露光 {ctx.exposure_s} s)")
+    if getattr(args, 'earthshine', False):
+        print("  地球照: 観測像に地球の照り返しを含める"
+              + (f"（テクスチャ {args.earth_texture}）" if getattr(args, 'earth_texture', None)
+                 else f"（一様アルベド {float(args.earth_uniform_albedo):.2f}）"))
+    if pv_writer is not None:
+        print(f"  PV 計測: {len(pv_panels)} 面 ({', '.join(p.name for p in pv_panels)}) "
+              f"→ {pv_writer.path}")
     print(f"  出力: {output_dir}/")
     print()
 
@@ -1386,10 +1477,17 @@ def _run(args: argparse.Namespace) -> None:
             if res.visible else '地平線下'
         mag_txt = f"mag={r['mag_obs']}" if r['mag_obs'] else f'({status})'
         star_txt = f" ★{r['n_stars']}" if int(r['n_stars']) else ''
+        pv_txt = ''
+        if pv_writer is not None:
+            ms = measure_pv_frame(args, ctx, frame, pv_panels)
+            pv_writer.write(frame, res.time_s, ms)
+            pv_txt = '\n        PV ' + format_summary(ms)
         print(f"  [{frame + 1:3d}/{args.frames}] t={res.time_s:8.1f}s "
               f"az={float(r['az_deg']):6.1f}° el={float(r['el_deg']):5.1f}° "
               f"d={float(r['range_km']):8.1f}km "
-              f"θ={float(r['ang_diameter_arcsec']):7.2f}\" {mag_txt}{star_txt}")
+              f"θ={float(r['ang_diameter_arcsec']):7.2f}\" {mag_txt}{star_txt}{pv_txt}")
+    if pv_writer is not None:
+        pv_writer.close()
 
     fieldnames = list(rows[0].keys()) if rows else []
     with open(csv_path, 'w', newline='') as fh:
@@ -1412,6 +1510,8 @@ def _run(args: argparse.Namespace) -> None:
     print(f"\n完了: 可視 {n_vis}/{len(rows)} フレーム"
           + (f", 最大光度 mag {min(mags):.2f}" if mags else ''))
     print(f"  ライトカーブ: {csv_path}")
+    if pv_writer is not None:
+        print(f"  PV 計測 CSV: {pv_writer.path}")
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:

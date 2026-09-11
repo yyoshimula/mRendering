@@ -1550,18 +1550,9 @@ def _run_parallel(args: argparse.Namespace, jobs: int) -> None:
 
 def _pv_csv_path(args: argparse.Namespace, output_dir: Path,
                  frame_start: Optional[int] = None) -> Path:
-    """PV 計測 CSV の置き場。
-
-    mrender 経由（output_dir = runs/<run>/frames）ならラン直下、
-    スタンドアロンなら output_dir 直下。--jobs のチャンクは
-    `<name>.part<frame_start>.csv` に書き、親が結合する。
-    """
-    name = str(getattr(args, 'pv_csv_name', None) or 'pv_irradiance.csv')
-    base = output_dir.parent if output_dir.name == 'frames' else output_dir
-    if frame_start is not None:
-        stem, dot, ext = name.rpartition('.')
-        name = f'{stem or ext}.part{int(frame_start):04d}.{ext if stem else "csv"}'
-    return base / name
+    """PV 計測 CSV の置き場（pv_irradiance.csv_output_path の薄いラッパ）。"""
+    from pv_irradiance import csv_output_path
+    return csv_output_path(args, output_dir, frame_start)
 
 
 def _run(args: argparse.Namespace) -> None:
@@ -1694,21 +1685,22 @@ def _run(args: argparse.Namespace) -> None:
 
     # --- 太陽電池パネル入射照度（pv_irradiance）---
     # パネル指定があればフレームごとに直達/地球照/その他を計測して CSV へ。
-    # 計測は画像用シーンとは別の 2 シーン（地球込み / 地球黒体。既定で
-    # 環境光なし）で行い、地球照はその差分。永続シーン時はそれぞれ
-    # PersistentScene を持つ（構築は初回のみ、テクスチャ実体は画像用と共有）。
+    # 計測は画像用シーンとは別の 3 シーン（地球込み / 地球黒体 / 地球なし。
+    # 既定で環境光なし、absolute では太陽の食 ν を外す）で行い、地球照は
+    # 前 2 者の差分。永続シーン時はそれぞれ PersistentScene を持つ
+    # （構築は初回のみ、テクスチャ実体は画像用と共有）。
     from pv_irradiance import (PvCsvWriter, add_pv_sensors, format_summary,
                                measure_panels, panels_from_args, pv_scene_dicts)
-    pv_panels = panels_from_args(args)
+    pv_panels = panels_from_args(args, hosts=('deputy', 'chief'))
     pv_writer = None
-    pscene_pv = (None, None)
+    pscene_pv = (None, None, None)
     pv_include_env = bool(getattr(args, 'pv_include_env', False))
     if pv_panels:
         csv_path = _pv_csv_path(args, output_dir,
                                 frame_start if is_chunk else None)
         pv_writer = PvCsvWriter(csv_path)
         if persistent:
-            pscene_pv = (PersistentScene(), PersistentScene())
+            pscene_pv = (PersistentScene(), PersistentScene(), PersistentScene())
         print(f"  PV 計測: {len(pv_panels)} 面 "
               f"({', '.join(p.name + '@' + p.host for p in pv_panels)}) "
               f"→ {csv_path}")
@@ -1799,23 +1791,25 @@ def _run(args: argparse.Namespace) -> None:
 
         pv_note = ''
         if pv_panels:
-            pv_full_dict, pv_black_dict = pv_scene_dicts(scene_dict, pv_include_env)
+            # absolute では画像用の太陽に ν が掛かっているので、PV シーンでは
+            # ν 無しの太陽に戻す（地球の昼側は衛星の食と無関係に照らされている）
+            pv_dicts = pv_scene_dicts(
+                scene_dict, pv_include_env,
+                sun_rgb=(sun_rgb if abs_ctx is not None else None))
             has_earth = 'earth' in scene_dict
-            if pscene is not None:
-                pscene_pv[0].sync(pv_full_dict)
-                scene_pv_full = pscene_pv[0].scene
-                scene_pv_black = None
-                if has_earth:
-                    pscene_pv[1].sync(pv_black_dict)
-                    scene_pv_black = pscene_pv[1].scene
-            else:
-                scene_pv_full = mi.load_dict(preload_bitmaps(share_bsdf_textures(pv_full_dict)))
-                scene_pv_black = (mi.load_dict(preload_bitmaps(share_bsdf_textures(pv_black_dict)))
-                                  if has_earth else None)
+            scenes_pv = [None, None, None]
+            for k, d in enumerate(pv_dicts):
+                if k > 0 and not has_earth:
+                    continue  # 地球なし → 黒体/直達シーンは地球込みと同一
+                if pscene is not None:
+                    pscene_pv[k].sync(d)
+                    scenes_pv[k] = pscene_pv[k].scene
+                else:
+                    scenes_pv[k] = mi.load_dict(preload_bitmaps(share_bsdf_textures(d)))
             sd = np.asarray(frame_sun_direction, dtype=float)
             sun_dir_scene_frame = -sd / np.linalg.norm(sd)
             measurements = measure_panels(
-                scene_pv_full, scene_pv_black, pv_panels,
+                scenes_pv[0], scenes_pv[1], scenes_pv[2], pv_panels,
                 sun_dir_scene=sun_dir_scene_frame,
                 sun_rgb_frame=frame_sun_rgb, sun_rgb_base=sun_rgb,
                 s0_wm2=float(args.pv_sun_irradiance_wm2),

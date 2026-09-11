@@ -37,6 +37,9 @@ def run(args: argparse.Namespace, run_dir: RunDir | None = None) -> RunDir:
         extra['frame_count'] = int(getattr(args, 'frames', 0))
         extra['frames_dir'] = str(run_dir.frames_dir)
         extra['observation_csv'] = args.csv_path
+        pv_csv = run_dir.path / str(getattr(args, 'pv_csv_name', None) or 'pv_irradiance.csv')
+        if pv_csv.exists():
+            extra['pv_irradiance_csv'] = str(pv_csv)
 
         # 動画化は manifest 書き込み（finally）より前に済ませる。
         if getattr(args, 'make_video', False):

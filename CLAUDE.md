@@ -204,20 +204,26 @@ relative はフレームごとの `mi.load_dict`（シーンパース・BVH・�
   最終実測（absolute 640×480 cuda）: 定常 **0.25 s/frame**（元 2.2 の ~9 倍）、
   20 フレーム通し 38→19.5 s、1024spp でも 1.5 s/frame。
 
-### 太陽電池パネルの入射照度・発電量（relative の PV 計測、`pv_irradiance.py`）
+### 太陽電池パネルの入射照度・発電量（PV 計測、`pv_irradiance.py`）
 
-relative verb でパネルを 1 枚でも指定すると、フレームごとに受光面の放射照度を
-**直達 / 地球照 / その他** に分けて `runs/<run>/pv_irradiance.csv` に書く
-（画像レンダと同時。列: frame, t_s, panel, host, area_m2, nu, cos_sun,
-sun_visible, e_direct_wm2, e_earth_wm2, e_other_wm2, e_total_wm2, p_w,
-e_earth_{r,g,b}_wm2）。発電量は P = η·A·E_total（`pv_efficiency`、既定 0.30）。
+**relative（static/csv/tumble/absolute）と groundobs** でパネルを 1 枚でも指定すると、
+フレームごとに受光面の放射照度を **直達 / 地球照 / その他** に分けて
+`runs/<run>/pv_irradiance.csv` に書く（画像レンダと同時。列: frame, t_s, panel,
+host, area_m2, nu, cos_sun, sun_visible, e_direct_wm2, e_earth_wm2, e_other_wm2,
+e_total_wm2, p_w, e_earth_{r,g,b}_wm2）。発電量は P = η·A·E_total
+（`pv_efficiency`、既定 0.30）。フラグは `verb_parsers.add_pv_arguments` で両 verb 共通
+（host は relative = deputy|chief、groundobs = target）。GUI は両 verb に
+「太陽電池パネル」セクション（`gui_server.pv_section`）。
 
 ```bash
-# Hubble 軌道 1 周・LVLH 姿勢・仮想パネル 2 翼（BMNG 地球の地球照込み）
+# Hubble 軌道 1 周・太陽指向・仮想パネル 2 翼 + 反太陽セル（一様アルベド 0.3 の地球照）
 python mrender.py relative --config presets/pv_hubble_orbit.yaml
-# 一様アルベド 0.3 のランバート球で概算 / 当日の実写雲分布（GIBS）で計算
-python mrender.py relative --config presets/pv_hubble_orbit.yaml --earth-uniform-albedo 0.3
+# BMNG テクスチャ地球 / 当日の実写雲分布（GIBS）で計算（地球照は下限値、後述）
+python mrender.py relative --config presets/pv_hubble_orbit.yaml --earth-uniform-albedo ''  # YAML で空欄に
 python mrender.py relative --config presets/pv_hubble_orbit.yaml --earth-gibs
+# groundobs（地上観測 + 軌道上の PV）: 観測像は従来どおり、PV は軌道・姿勢・GMST 地球から計算
+python mrender.py groundobs --config presets/groundobs_hubble.yaml \
+    --pv-panel-size 2.5 7.1 --pv-panel-center 3.9 0 -0.8 --pv-panel-normal 0 0 -1
 # 解析参照（Mitsuba 不要）: 単一 BRDF 球の地球照を格子積分
 python tools/pv_earthshine_reference.py --altitude-km 550 --sun-zenith-deg 0 60
 ```
@@ -231,10 +237,22 @@ python tools/pv_earthshine_reference.py --altitude-km 550 --sun-zenith-deg 0 60
 - **仕組み**: 間接光は Mitsuba `irradiancemeter`（シェイプ入れ子、1×1 film に
   ∫L cosθ dω がそのまま出る）。**directional 太陽は irradiancemeter に写らない**
   （センサ位置で NEE が走らない、実測 0）ので直達は解析: E_direct =
-  S0·ν·⟨max(0,n·ŝ)·vis⟩、vis は `scene.ray_test` による自己遮蔽。地球照は
-  「地球を反射率 0 の黒体にした同一シーン」との差分（地球を外すと地球に隠れる
-  はずの環境光が下半球から入り −6% になる）。環境光は既定で計測から除外
-  （既定フィル光 0.02 は可視化用 ≈ 18 W/m²。`--pv-include-env` で含める）。
+  S0·ν·⟨max(0,n·ŝ)·vis⟩、vis は `scene.ray_test` による自己遮蔽（地球なしシーン
+  で判定。食は ν で扱う）。地球照は「地球を反射率 0 の黒体にした同一シーン」との
+  差分（地球を外すと地球に隠れるはずの環境光が下半球から入り −6% になる）。
+  **PV シーンの太陽には食 ν を掛けない**（`pv_scene_dicts(sun_rgb=...)`。衛星が
+  影でも地球の昼側は照らされている。機体相互反射はシーン内の地球球体が幾何学的に
+  遮る = 半影は硬い影近似）。環境光は既定で計測から除外（既定フィル光 0.02 は
+  可視化用 ≈ 18 W/m²。`--pv-include-env` で含める）。
+  Mitsuba の辞書パーサは内容同一ノードを 1 オブジェクトに畳むため、センサは
+  パネルごとに sampler seed を変えて一意化している（でないと 2 枚目で
+  "endpoint can only be attached to a single shape"）。
+- **groundobs の地球**: シーンに地球が無いので `earth_backdrop_at` が物体原点の
+  ECI 系に地球球体（既定 `earth_uniform_albedo` 0.3、`--earth-texture` で
+  テクスチャ + GMST 姿勢 + 可視域クロップ）を置く。`--earthshine` を立てると
+  観測像のレンダにも地球を入れ、物体への照り返しが測光に乗る（既定 OFF。
+  ランバート球の解析検証は太陽のみで成立。カメラ far_clip は代理距離基準なので
+  地球は画に写らず、物体→地球→太陽のパスだけが乗る）。
 - **単位換算**: E_phys = S0_wm2 · lum(E_rgb)/lum(sun_rgb)（Rec.709 輝度、groundobs と
   同じ規約）。RGB 3 帯域の可視近似で、NIR 域（植生 0.4〜0.5、海 ≈ 0）は含まれない
   → Si/3 接合セルの応答域に対して地球照は過小になりうる（spectral バリアントは
@@ -353,6 +371,9 @@ python ground_observation.py --tle input/iss_sample.tle --frames 10
   表示 PNG は背景中央値を引き 8σ フロアでストレッチ（実データは *_linear.npy）。
   ノイズ OFF でもモノクロ検出器を模すなら `--monochrome`（Rec.709 輝度、
   *_linear.npy も 2D になる。sensor-noise ON は常にモノクロなので不要）
+- **PV 計測 / 地球照**（`--pv-*`、`--earthshine`、`--earth-uniform-albedo`、
+  `--earth-texture`）: 「太陽電池パネルの入射照度・発電量」節を参照。PV は観測者の
+  可視性と無関係に全フレーム計測し、`pv_irradiance.csv` を observation.csv の隣に書く
 - **ライブプレビュー対応**: `build_context` + `render_observation_frame` を
   live_worker が共用し、処理済み画像を `FrameBuild.image01` で返す特殊経路
   （worker の mi.render はスキップ）。カメラは観測幾何から決まるため
@@ -447,7 +468,7 @@ ffmpeg -framerate 30 -i runs/<RUN>/frames/frame_%04d.png \
 - **simple_rotation.py** - rotation のコア：オイラー回転運動方程式、クォータニオン姿勢、OBJパーツ別BSDF（軌道なし）
 - **relative_motion.py** - relative のコア：相対位置・相対姿勢で 2 機を配置（軌道なし、static/csv/tumble モード、地球背景・太陽・星空のフォトリアル環境オプション付き）
 - **ground_observation.py** - groundobs のコア：地上望遠鏡観測（WGS-84 地上局 + GMST + VSOP87 太陽 + TLE/SGP4 + 絶対測光 + 屈折 + シーイング PSF + 恒星背景 + 追尾モード + CCD ノイズ。build_context / render_observation_frame を live_worker と共用）
-- **pv_irradiance.py** - relative の PV 計測：受光面（仮想矩形 / OBJ パーツ）の直達（解析 + レイキャスト遮蔽）・地球照（irradiancemeter、地球黒体差分）・発電量を CSV 出力。解析参照は `tools/pv_earthshine_reference.py`（Lumos 由来の格子積分）
+- **pv_irradiance.py** - relative / groundobs の PV 計測：受光面（仮想矩形 / OBJ パーツ）の直達（解析 + レイキャスト遮蔽）・地球照（irradiancemeter、地球黒体差分）・発電量を CSV 出力。解析参照は `tools/pv_earthshine_reference.py`（Lumos 由来の格子積分）
 - **gui_server.py / gui/index.html** - ブラウザ GUI（標準ライブラリ HTTP サーバー + 単一 HTML）。設定フォーム→YAML 生成→verb サブプロセス起動→進捗表示
 - **verbs/** - mrender サブコマンドのシム
 - **scene_common.py** - relative/rotation 共有のシーン部品・姿勢伝播（propagate_attitude / create_axes / create_satellite / split_obj_by_parts〔(path,mtime) キャッシュ内蔵〕/ load_model_with_parts）。**唯一の実装**で、両 verb は再エクスポート

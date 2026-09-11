@@ -38,9 +38,9 @@ def _lambert_earth_scene(sun_dir_scene, albedo=0.3, env=None, extra=None):
 
 
 def _measure(d, panel, sun_dir_scene, include_env=False):
-    full, black = pv.pv_scene_dicts(d, include_env)
+    full, black, direct = pv.pv_scene_dicts(d, include_env)
     return pv.measure_panels(
-        mi.load_dict(full), mi.load_dict(black), [panel],
+        mi.load_dict(full), mi.load_dict(black), mi.load_dict(direct), [panel],
         sun_dir_scene=sun_dir_scene, sun_rgb_frame=[5.0, 5.0, 4.8],
         sun_rgb_base=[5.0, 5.0, 4.8], s0_wm2=S0, nu=1.0, spp=16384,
         direct_samples=2048)[0]
@@ -123,9 +123,61 @@ class PvIrradianceTests(unittest.TestCase):
         self.assertEqual(panels[2].scene_key, 'deputy_part_hbltel_1')
         self.assertEqual(panels[3].efficiency, 0.2)
         self.assertEqual(pv.panels_from_args(argparse.Namespace()), [])
+        with self.assertRaises(ValueError):   # groundobs は host=target のみ
+            pv.panels_from_args(args, hosts=('target',))
         args.pv_panel_name = 'a'
         with self.assertRaises(ValueError):
             pv.panels_from_args(args)
+
+    def test_sun_override_keeps_earthshine_during_eclipse(self):
+        # absolute モード相当: 画像用の太陽に ν=0 が掛かっていても、PV シーンでは
+        # ν 無しの太陽に戻すので地球の昼側からの地球照が残る
+        sun_dir = [0.0, math.sin(math.radians(60)), math.cos(math.radians(60))]
+        d, panel = _lambert_earth_scene(sun_dir)
+        d['sun']['irradiance']['value'] = [0.0, 0.0, 0.0]        # ν = 0
+        full, black, direct = pv.pv_scene_dicts(d, sun_rgb=[5.0, 5.0, 4.8])
+        m = pv.measure_panels(
+            mi.load_dict(full), mi.load_dict(black), mi.load_dict(direct), [panel],
+            sun_dir_scene=sun_dir, sun_rgb_frame=[0.0, 0.0, 0.0],
+            sun_rgb_base=[5.0, 5.0, 4.8], s0_wm2=S0, nu=0.0, spp=8192,
+            direct_samples=512)[0]
+        expect = ref.earthshine_irradiance(H, 60.0, (0, 0, -1), ref.lambertian(0.3))
+        self.assertAlmostEqual(m.e_earth / expect, 1.0, delta=0.03)
+        self.assertEqual(m.e_direct, 0.0)
+        self.assertEqual(m.nu, 0.0)
+
+    def test_groundobs_pv_matches_reference(self):
+        import ground_observation as go
+        with tempfile.TemporaryDirectory() as tmp:
+            args = go.parse_args([
+                '--frames', '1', '--altitude-km', str(H), '--attitude-mode', 'nadir',
+                '--sphere-radius-m', '1.0', '--samples', '2', '--sensor-px', '16',
+                '--epoch-utc', '2026-03-20T12:00:00',
+                '--pv-panel-size', '1', '1', '--pv-panel-normal', '0', '0', '1',
+                '--pv-panel-center', '0', '0', '2',   # 球（半径 1 m）の外、機体 +z = 天底
+                '--pv-samples', '8192', '--pv-direct-samples', '512',
+                '--output-dir', tmp])
+            ctx = go.build_context(args)
+            g = go.geometry_at(ctx, ctx.t_start)
+            panels = pv.panels_from_args(args, hosts=('target',))
+            m = go.measure_pv_frame(args, ctx, 0, panels)[0]
+            # 参照: 物体直下点の太陽天頂角と、天底向き板
+            r_hat = g.r_obj / np.linalg.norm(g.r_obj)
+            s_hat = g.sun_pos / np.linalg.norm(g.sun_pos)
+            sz_deg = math.degrees(math.acos(float(np.clip(r_hat @ s_hat, -1, 1))))
+            alt = float(np.linalg.norm(g.r_obj)) - R
+            expect = ref.earthshine_irradiance(alt, sz_deg, (0, 0, -1), ref.lambertian(0.3))
+            self.assertGreater(expect, 50.0)   # 昼側で意味のある値になる時刻を選んである
+            self.assertAlmostEqual(m.e_earth / expect, 1.0, delta=0.03)
+            # 天底向き板への直達 = S0·ν·max(0, −r̂·ŝ)
+            self.assertAlmostEqual(m.e_direct, S0 * g.nu * max(0.0, float(-r_hat @ s_hat)),
+                                   delta=1.0)
+            self.assertEqual(m.host, 'target')
+            # CSV 出力（_run 経由）
+            go._run(args)
+            rows = list(csv.DictReader(open(Path(tmp) / 'pv_irradiance.csv', newline='')))
+            self.assertEqual(len(rows), 1)
+            self.assertAlmostEqual(float(rows[0]['e_earth_wm2']) / expect, 1.0, delta=0.03)
 
     def test_run_writes_csv_with_direct_and_earthshine(self):
         with tempfile.TemporaryDirectory() as tmp:

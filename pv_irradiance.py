@@ -100,8 +100,6 @@ class PvPanel:
 
     def __post_init__(self) -> None:
         self.host = str(self.host)
-        if self.host not in ('deputy', 'chief'):
-            raise ValueError(f'pv panel {self.name!r}: host は deputy|chief（{self.host!r}）')
         if self.kind == 'rect':
             self.area_m2 = float(self.size[0]) * float(self.size[1])
 
@@ -124,15 +122,17 @@ def _as_vec(v, n: int, label: str) -> tuple:
     return tuple(arr)
 
 
-def panels_from_args(args: argparse.Namespace) -> List[PvPanel]:
+def panels_from_args(args: argparse.Namespace,
+                     hosts: Sequence[str] = ('deputy', 'chief')) -> List[PvPanel]:
     """argparse Namespace（YAML マージ後）から PvPanel 一覧を作る。
 
     優先順: YAML `pv_panels`（list[dict] / {name: dict}）+ `pv_parts` +
     単一パネル CLI フラグ（`--pv-panel-size` 指定時のみ有効）。
-    何も無ければ空リスト（= PV 計測しない）。
+    何も無ければ空リスト（= PV 計測しない）。hosts は verb が許す取付機体名
+    （relative: deputy/chief、groundobs: target）。
     """
     panels: List[PvPanel] = []
-    host_default = str(getattr(args, 'pv_host', 'deputy') or 'deputy')
+    host_default = str(getattr(args, 'pv_host', None) or hosts[0])
     eff_default = float(getattr(args, 'pv_efficiency', 0.30) or 0.30)
 
     raw = getattr(args, 'pv_panels', None)
@@ -177,7 +177,27 @@ def panels_from_args(args: argparse.Namespace) -> List[PvPanel]:
     names = [p.name for p in panels]
     if len(set(names)) != len(names):
         raise ValueError(f'pv パネル名が重複しています: {names}')
+    for p in panels:
+        if p.host not in hosts:
+            raise ValueError(f'pv panel {p.name!r}: host は {"|".join(hosts)}（{p.host!r}）')
     return panels
+
+
+def csv_output_path(args: argparse.Namespace, output_dir, frame_start: Optional[int] = None):
+    """PV 計測 CSV の置き場。
+
+    mrender 経由（output_dir = runs/<run>/frames）ならラン直下、
+    スタンドアロンなら output_dir 直下。--jobs のチャンクは
+    `<name>.part<frame_start>.csv` に書き、親が結合する。
+    """
+    from pathlib import Path
+    output_dir = Path(output_dir)
+    name = str(getattr(args, 'pv_csv_name', None) or 'pv_irradiance.csv')
+    base = output_dir.parent if output_dir.name == 'frames' else output_dir
+    if frame_start is not None:
+        stem, dot, ext = name.rpartition('.')
+        name = f'{stem or ext}.part{int(frame_start):04d}.{ext if stem else "csv"}'
+    return base / name
 
 
 # ---------------------------------------------------------------------------
@@ -273,21 +293,35 @@ BLACK_ENV = {'type': 'constant', 'radiance': {'type': 'rgb', 'value': [0.0, 0.0,
 BLACK_BSDF = {'type': 'diffuse', 'reflectance': {'type': 'rgb', 'value': [0.0, 0.0, 0.0]}}
 
 
-def pv_scene_dicts(scene_dict: dict, include_env: bool = False) -> Tuple[dict, dict]:
-    """(地球込み, 地球黒体) の PV 計測用シーン辞書ペアを返す。
+def pv_scene_dicts(scene_dict: dict, include_env: bool = False,
+                   sun_rgb=None) -> Tuple[dict, dict, dict]:
+    """(地球込み, 地球黒体, 地球なし) の PV 計測用シーン辞書 3 つを返す。
 
-    どちらも画像用 scene_dict の浅いコピーで、既定では envmap を黒にする。
-    地球が無いシーンでは 2 つ目は 1 つ目と同一（地球照 = 0）。
+    いずれも画像用 scene_dict の浅いコピーで、既定では envmap を黒にする。
+      - 地球込み − 地球黒体 = 地球照（地球の遮蔽は両方に同じに効く）
+      - 地球黒体            = その他（機体相互反射 + 環境光）
+      - 地球なし            = 直達の自己遮蔽レイキャスト用（地球による食は
+                              解析の ν で扱うので、ここでは地球に遮らせない）
+    sun_rgb を与えると太陽 irradiance を差し替える。absolute モードのように
+    画像用シーンの太陽に食 ν が掛かっている場合は **ν を外した値** を渡すこと:
+    衛星が地球の影にいても地球の昼側は太陽に照らされているので、地球照の
+    計算で太陽を暗くしてはいけない（機体自身への直達・機体相互反射は
+    シーン内の地球球体が幾何学的に遮る。半影は硬い影で近似）。
     """
     full = dict(scene_dict)
     if not include_env and 'envmap' in full:
         full['envmap'] = dict(BLACK_ENV)
+    if sun_rgb is not None and 'sun' in full:
+        sun = dict(full['sun'])
+        sun['irradiance'] = {'type': 'rgb', 'value': [float(v) for v in sun_rgb]}
+        full['sun'] = sun
     black = dict(full)
     if 'earth' in black:
         earth = dict(black['earth'])
         earth['bsdf'] = dict(BLACK_BSDF)
         black['earth'] = earth
-    return full, black
+    direct = {k: v for k, v in black.items() if k != 'earth'}
+    return full, black, direct
 
 
 # ---------------------------------------------------------------------------
@@ -393,7 +427,7 @@ class PvMeasurement:
         }
 
 
-def measure_panels(scene_full, scene_black, panels: Sequence[PvPanel], *,
+def measure_panels(scene_full, scene_black, scene_direct, panels: Sequence[PvPanel], *,
                    sun_dir_scene, sun_rgb_frame, sun_rgb_base, s0_wm2: float,
                    nu: float, spp: int, direct_samples: int,
                    seed: int = 0) -> List[PvMeasurement]:
@@ -402,11 +436,15 @@ def measure_panels(scene_full, scene_black, panels: Sequence[PvPanel], *,
     Args:
         scene_full     : 地球込みの mi.Scene（PV センサ入り、姿勢同期済み）
         scene_black    : 地球を黒体にした mi.Scene（None なら地球照 = 0 扱い）
+        scene_direct   : 地球なしの mi.Scene（直達の自己遮蔽レイキャスト用。
+                         None なら scene_full を使う）
         sun_dir_scene  : シーン座標での「太陽の方向」単位ベクトル
         sun_rgb_frame  : このフレームの太陽 RGB（ν 込み、レンダ単位）
         sun_rgb_base   : ν 無しの太陽 RGB（物理換算の基準）
         s0_wm2         : 太陽定数 [W/m²]
     """
+    if scene_direct is None:
+        scene_direct = scene_full
     base = np.asarray(sun_rgb_base, dtype=float).reshape(3)
     frame_rgb = np.asarray(sun_rgb_frame, dtype=float).reshape(3)
     lum_base = max(luminance(base), 1e-12)
@@ -421,7 +459,7 @@ def measure_panels(scene_full, scene_black, panels: Sequence[PvPanel], *,
             e_no = e_full.copy()
         e_earth_rgb = np.maximum(e_full - e_no, 0.0)
         factor, mean_cos, vis_lit = direct_sun_factor(
-            scene_full, p.scene_key, sun_dir_scene, direct_samples, seed=seed * 131 + i)
+            scene_direct, p.scene_key, sun_dir_scene, direct_samples, seed=seed * 131 + i)
         e_direct = luminance(frame_rgb) * factor * scale
         e_earth = luminance(e_earth_rgb) * scale
         e_other = luminance(e_no) * scale
