@@ -146,6 +146,33 @@ class PvIrradianceTests(unittest.TestCase):
         self.assertEqual(m.e_direct, 0.0)
         self.assertEqual(m.nu, 0.0)
 
+    def test_groundobs_earthshine_flag_brightens_lightcurve(self):
+        # 物体が昼側の地球の上にいる幾何（観測地も昼）では、--earthshine で観測像の
+        # 開口面照度が増える = observation.csv のライトカーブに地球照が乗る
+        import ground_observation as go
+        base = ['--frames', '1', '--altitude-km', str(H), '--attitude-mode', 'nadir',
+                '--sphere-radius-m', '1.0', '--samples', '64', '--sensor-px', '16',
+                '--start-overhead', '--seeing-arcsec', '2.0']
+        pick = None
+        for hh in range(24):
+            ep = f'2026-03-20T{hh:02d}:00:00'
+            args = go.parse_args(base + ['--epoch-utc', ep])
+            g = go.geometry_at(go.build_context(args), 0.0)
+            if g.nu > 0.99 and g.sun_el > 30.0:
+                pick = ep
+                break
+        self.assertIsNotNone(pick)
+        flux = {}
+        for es in (False, True):
+            args = go.parse_args(base + ['--epoch-utc', pick] + (['--earthshine'] if es else []))
+            res = go.render_observation_frame(args, go.build_context(args), 0)
+            flux[es] = float(res.row['irradiance_wm2'])
+        # 観測地が昼だと観測者は物体の天底側（太陽と反対側、位相角 ~120°）を見る
+        # ので直達の寄与は満月相当の ~7% しかなく、天底半球全体を照らす地球照
+        # （~0.26·S0 で相当 ~17%）の方が大きい → 2〜3 倍に増える（実測 2.7 倍）
+        self.assertGreater(flux[True], flux[False] * 1.5)
+        self.assertLess(flux[True], flux[False] * 8.0)
+
     def test_groundobs_pv_matches_reference(self):
         import ground_observation as go
         with tempfile.TemporaryDirectory() as tmp:

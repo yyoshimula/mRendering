@@ -373,7 +373,12 @@ python ground_observation.py --tle input/iss_sample.tle --frames 10
   *_linear.npy も 2D になる。sensor-noise ON は常にモノクロなので不要）
 - **PV 計測 / 地球照**（`--pv-*`、`--earthshine`、`--earth-uniform-albedo`、
   `--earth-texture`）: 「太陽電池パネルの入射照度・発電量」節を参照。PV は観測者の
-  可視性と無関係に全フレーム計測し、`pv_irradiance.csv` を observation.csv の隣に書く
+  可視性と無関係に全フレーム計測し、`pv_irradiance.csv` を observation.csv の隣に書く。
+  **`earthshine` は CLI 既定 OFF、`presets/groundobs_*.yaml` は全て ON**（観測像・
+  観測ライトカーブに地球の照り返しが乗る。解析検証は既定 OFF で成立させる方針）。
+  地上観測では観測者側 = 天底側の地球が夜なので効果は小さく（薄明の天頂パスで
+  ~0.001 mag）、効くのは薄明・低仰角で昼側の地球の上にいるパス。`lightcurve` verb
+  （satellite_orbit の相対光度）は `include_earth=False` のままで地球照を含まない
 - **ライブプレビュー対応**: `build_context` + `render_observation_frame` を
   live_worker が共用し、処理済み画像を `FrameBuild.image01` で返す特殊経路
   （worker の mi.render はスキップ）。カメラは観測幾何から決まるため
