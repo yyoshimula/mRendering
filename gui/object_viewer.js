@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+/* 表示言語（gui/i18n.js がグローバルに読まれていれば翻訳、無ければ原文） */
+const tr = (s, vars) => (globalThis.I18N ? globalThis.I18N.t(s, vars) : s);
 import { OrbitControls } from './vendor/three/examples/jsm/controls/OrbitControls.js';
 import { OBJLoader } from './vendor/three/examples/jsm/loaders/OBJLoader.js';
 import { MTLLoader } from './vendor/three/examples/jsm/loaders/MTLLoader.js';
@@ -18,7 +20,7 @@ export class ObjectViewer {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.domElement.setAttribute('aria-label', 'モデルの3D表示。ドラッグで回転、ホイールで拡大縮小');
+    this.renderer.domElement.setAttribute('aria-label', tr('モデルの3D表示。ドラッグで回転、ホイールで拡大縮小'));
     this.renderer.domElement.tabIndex = 0;
     host.appendChild(this.renderer.domElement);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -59,7 +61,7 @@ export class ObjectViewer {
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(host);
     this.renderer.domElement.addEventListener('webglcontextlost', e => {
-      e.preventDefault(); status.textContent = '3D表示が中断されました。画面を再読み込みしてください。';
+      e.preventDefault(); status.textContent = tr('3D表示が中断されました。画面を再読み込みしてください。');
     });
     this.renderer.domElement.addEventListener('dblclick', () => this.fit());
     this.fit();
@@ -113,7 +115,7 @@ export class ObjectViewer {
     if (extension === 'glb' || extension === 'gltf') return (await this.gltfLoader.loadAsync(url)).scene;
     if (extension === 'ply') return new THREE.Group().add(new THREE.Mesh(await new PLYLoader().loadAsync(url), this.gray.clone()));
     const response = await fetch(url);
-    if (!response.ok) throw new Error('モデルファイルを読み込めません');
+    if (!response.ok) throw new Error(tr('モデルファイルを読み込めません'));
     const text = await response.text();
     const loader = new OBJLoader();
     const mtl = /^mtllib\s+(.+)$/m.exec(text);
@@ -122,7 +124,7 @@ export class ObjectViewer {
       const manager = new THREE.LoadingManager();
       manager.setURLModifier(url => {
         const resolved = new URL(url, location.href);
-        if (resolved.origin !== location.origin || !resolved.pathname.startsWith('/model-assets/')) throw new Error('外部の材質参照は読み込めません');
+        if (resolved.origin !== location.origin || !resolved.pathname.startsWith('/model-assets/')) throw new Error(tr('外部の材質参照は読み込めません'));
         return resolved.href;
       });
       try {
@@ -170,7 +172,7 @@ export class ObjectViewer {
     if (this.loadingPath === path) return;
     this.loadingPath = path;
     const generation = ++this.generation;
-    this.status.textContent = 'モデルを読み込み中…';
+    this.status.textContent = tr('モデルを読み込み中…');
     this.host.setAttribute('aria-busy', 'true');
     let object;
     try {
@@ -182,7 +184,7 @@ export class ObjectViewer {
       object.updateMatrixWorld(true);
       const box = new THREE.Box3().setFromObject(object);
       const radius = box.getSize(new THREE.Vector3()).length() / 2;
-      if (!Number.isFinite(radius) || radius <= 0) throw new Error('頂点が潰れたモデルです。元のGLBを選択してください。');
+      if (!Number.isFinite(radius) || radius <= 0) throw new Error(tr('頂点が潰れたモデルです。元のGLBを選択してください。'));
       const group = new THREE.Group(); group.add(object); group.scale.setScalar(1 / radius); // Keep the OBJ origin coincident with the axis origin.
       let triangles = 0;
       object.traverse(mesh => {
@@ -196,12 +198,12 @@ export class ObjectViewer {
       if (this.object) { this.scene.remove(this.object); this.disposeObject(this.object); }
       this.object = group; this.scene.add(group); this.path = path;
       this.applyDisplay(); this.fit();
-      this.loadedStatus = `${Math.round(triangles).toLocaleString()} 三角形 · ブラウザ内で表示`;
+      this.loadedStatus = tr('{n} 三角形 · ブラウザ内で表示', {n: Math.round(triangles).toLocaleString()});
       this.status.textContent = this.loadedStatus;
     } catch (error) {
       if (generation === this.generation) {
         if (object && object.parent !== this.object) this.disposeObject(object);
-        this.status.textContent = 'モデル表示エラー: ' + error.message;
+        this.status.textContent = tr('モデル表示エラー') + ': ' + error.message;
       }
     } finally { if (generation === this.generation) { this.loadingPath = null; this.host.setAttribute('aria-busy', 'false'); } }
   }

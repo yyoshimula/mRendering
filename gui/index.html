@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>mRender GUI — 衛星軌道レンダリング</title>
 <script type="importmap">{"imports":{"three":"/gui/vendor/three/build/three.module.min.js"}}</script>
+<script src="/gui/i18n.js"></script>
 <script>
 // 初回は従来のダーク配色。保存済みのテーマは描画前に適用する。
 try {
@@ -261,6 +262,9 @@ dialog::backdrop { background: rgba(0,0,0,.6); }
   content: "プリセットの編集や設定の相談を日本語で。例:「oos_hubble.yaml の分離距離を 25 m にして」「この設定で露出が飛ぶ理由は？」";
   color: var(--dim); font-size: 12px; line-height: 1.7; padding: 8px 4px;
 }
+html[lang="en"] .ai-log:empty::before {
+  content: "Ask about presets or settings. e.g. “Set the separation distance in oos_hubble.yaml to 25 m” or “Why is this setup overexposed?”";
+}
 .ai-msg { border-radius: 10px; padding: 8px 11px; font-size: 13px; line-height: 1.6; word-break: break-word; }
 .ai-msg.user { background: var(--accent); color: #fff; align-self: flex-end; white-space: pre-wrap; max-width: 88%; }
 .ai-msg.md { background: var(--panel2); align-self: stretch; }
@@ -394,6 +398,13 @@ header { align-items:center; }
     <select id="themeSelect">
       <option value="dark">ダーク</option>
       <option value="light">ライト</option>
+    </select>
+  </label>
+  <label class="theme-picker" for="langSelect" title="auto = ブラウザ（OS）の言語に従う">言語
+    <select id="langSelect">
+      <option value="auto">自動</option>
+      <option value="ja" translate="no">日本語</option>
+      <option value="en">English</option>
     </select>
   </label>
   <button id="aiBtn" title="AI アシスタントを開く / 閉じる">🤖 AI</button>
@@ -609,6 +620,14 @@ header { align-items:center; }
 </dialog>
 <script>
 'use strict';
+/* 表示言語（gui/i18n.js）。静的 HTML はここで一括置換し、以降の JS 生成文言は tr() を通す。 */
+const tr = I18N.t;
+I18N.translateDom(document.documentElement);
+{
+  const langSelect = document.getElementById('langSelect');
+  langSelect.value = I18N.pref;
+  langSelect.addEventListener('change', () => { I18N.setPreference(langSelect.value); location.reload(); });
+}
 const themeSelect = document.getElementById('themeSelect');
 themeSelect.value = document.documentElement.dataset.theme;
 themeSelect.addEventListener('change', () => {
@@ -635,7 +654,7 @@ const $ = (sel) => document.querySelector(sel);
 async function api(path, opts) {
   const res = await fetch(path, opts);
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || res.statusText);
+  if (!res.ok) throw new Error(tr(data.error) || res.statusText);
   return data;
 }
 
@@ -675,9 +694,9 @@ function buildField(field, defaults) {
     for (const opt of field.options) {
       const o = document.createElement('option');
       o.value = opt; o.textContent = field.key === 'display_mode'
-        ? ({solid: '面表示', overlay: '面＋ワイヤーフレーム', wire: 'ワイヤーフレームのみ'}[opt] || opt)
-        : field.key === 'camera_mode' ? ({manual: '外部カメラ（手動）', chief_to_deputy: 'chief → deputy', chief_fixed: 'chief fixed', deputy_to_chief: 'deputy → chief', deputy_fixed: 'deputy fixed'}[opt] || opt)
-        : opt === '' ? '（なし）' : opt;
+        ? ({solid: tr('面表示'), overlay: tr('面＋ワイヤーフレーム'), wire: tr('ワイヤーフレームのみ')}[opt] || opt)
+        : field.key === 'camera_mode' ? ({manual: tr('外部カメラ（手動）'), chief_to_deputy: 'chief → deputy', chief_fixed: 'chief fixed', deputy_to_chief: 'deputy → chief', deputy_fixed: 'deputy fixed'}[opt] || opt)
+        : opt === '' ? tr('（なし）') : opt;
       sel.appendChild(o);
     }
     if (dflt != null) sel.value = String(dflt);
@@ -689,7 +708,7 @@ function buildField(field, defaults) {
     input.type = 'text';
     const listId = 'dl_' + field.kind;
     input.setAttribute('list', listId);
-    input.placeholder = field.optional ? '（未指定）' : '';
+    input.placeholder = field.optional ? tr('（未指定）') : '';
     if (dflt != null) input.value = String(dflt);
     if (!document.getElementById(listId)) {
       const dl = document.createElement('datalist');
@@ -741,7 +760,7 @@ function buildField(field, defaults) {
     input.type = (field.type === 'int' || field.type === 'float') ? 'number' : 'text';
     if (field.type === 'float') input.step = field.step || 'any';
     if (field.type === 'int') input.step = '1';
-    input.placeholder = field.optional ? '（未指定=デフォルト）' : '';
+    input.placeholder = field.optional ? tr('（未指定=デフォルト）') : '';
     if (dflt != null) input.value = String(dflt);
     wrap.appendChild(input);
     getter = () => {
@@ -848,9 +867,9 @@ function wireRelativeModeLink(verb) {
   const entries = [];
   const groups = [
     [ABS_IGNORED_KEYS, (m) => m === 'absolute',
-     'absolute モードでは軌道から自動計算されるため無視されます'],
+     tr('absolute モードでは軌道から自動計算されるため無視されます')],
     [ABS_ONLY_KEYS, (m) => m !== 'absolute',
-     'mode=absolute のときだけ使われます'],
+     tr('mode=absolute のときだけ使われます')],
   ];
   for (const [keys, offWhen, text] of groups) {
     for (const key of keys) {
@@ -891,7 +910,7 @@ function wireDurationFpsLink(verb) {
   const note = document.createElement('div');
   note.className = 'help';
   note.style.color = 'var(--warn)';
-  note.textContent = 'シミュレーション時間を指定中のため無視されます（dt = 時間 ÷ フレーム数）';
+  note.textContent = tr('シミュレーション時間を指定中のため無視されます（dt = 時間 ÷ フレーム数）');
   note.style.display = 'none';
   fpsWrap.appendChild(note);
   const update = () => {
@@ -968,23 +987,24 @@ function renderExtraKeys() {
         <div id="extraKeysBar"><button class="mini" id="extraKeysClear"
              title="これらのキーを捨てて、フォームの内容だけで実行する">クリア</button></div>
       </div>`;
+    I18N.translateDom(det);
     det.querySelector('#extraKeysClear').onclick = () => {
       clearExtraKeys(currentVerb);
       renderExtraKeys();
-      setStatus('フォーム未対応のキーを破棄しました');
+      setStatus(tr('フォーム未対応のキーを破棄しました'));
       liveScheduleUpdate(0, false);
     };
   }
-  det.querySelector('#extraKeysCount').textContent = `${keys.length} 件`;
+  det.querySelector('#extraKeysCount').textContent = tr('{n} 件', {n: keys.length});
   det.querySelector('#extraKeysText').textContent = jsyamlDump(extras);
   formEl.appendChild(det);   // buildForm で作り直された時も末尾へ付け直す
 }
 
 /* ---------------- シナリオ・ターゲット・プリセット ---------------- */
 const SCENARIOS = {
-  absolute: {label: '絶対軌道', desc: '地球を周回する衛星の軌道・姿勢を確認', verb: 'render'},
-  relative: {label: '相対軌道', desc: 'ターゲットと観測側の接近・周回・近接撮像', verb: 'relative'},
-  ground: {label: '地上観測', desc: '地上の望遠鏡から見える像と明るさを確認', verb: 'groundobs'},
+  absolute: {label: tr('絶対軌道'), desc: tr('地球を周回する衛星の軌道・姿勢を確認'), verb: 'render'},
+  relative: {label: tr('相対軌道'), desc: tr('ターゲットと観測側の接近・周回・近接撮像'), verb: 'relative'},
+  ground: {label: tr('地上観測'), desc: tr('地上の望遠鏡から見える像と明るさを確認'), verb: 'groundobs'},
 };
 // 用途で分類する（計算法が絶対軌道でも用途が相対撮像なら relative）。
 // 配布に含めないプリセット（internal/presets/）は YAML 先頭の '# mrender-gui: [...]' 行で自己記述する。
@@ -1025,7 +1045,7 @@ function presetMeta(path) {
 function scenarioPresets() {
   return STATE.files.preset.filter(p => ['*', currentScenario].includes(presetMeta(p).scenario));
 }
-function modelLabel(path) { return STATE.files.model_labels?.[path] || path.replace(/^(internal\/)?models\//, ''); }
+function modelLabel(path) { return tr(STATE.files.model_labels?.[path] || path.replace(/^(internal\/)?models\//, '')); }
 function fillSelect(el, options, value) {
   el.replaceChildren(...options.map(([v, label]) => new Option(label, v)));
   el.value = options.some(([v]) => v === value) ? value : options[0]?.[0] || '';
@@ -1073,7 +1093,7 @@ function switchScenario(scenario) {
   buildTabs();
   buildPresets();
   if (draft) $('#presetSelect').value = draft.selected;
-  setStatus(draft ? '編集中の設定を復元しました' : scenario === 'modelview' ? 'モデルを選んでマウスで形状を確認できます' : scenario === 'relative' ? 'chief・deputyとカメラをそれぞれ選択できます' : 'ターゲットを選ぶとプリセットを読み込みます');
+  setStatus(tr(draft ? '編集中の設定を復元しました' : scenario === 'modelview' ? 'モデルを選んでマウスで形状を確認できます' : scenario === 'relative' ? 'chief・deputyとカメラをそれぞれ選択できます' : 'ターゲットを選ぶとプリセットを読み込みます'));
   syncQuickControls();
   liveOnFormRebuilt();
   if (currentVerb !== 'modelview' && !LIVE.on) liveToggleOnOff();
@@ -1092,24 +1112,24 @@ function buildTabs() {
     nav.appendChild(b);
   }
   $('#rotationBtn').setAttribute('aria-pressed', String(currentScenario === 'modelview'));
-  $('#scenarioDesc').textContent = SCENARIOS[currentScenario]?.desc || '背景なしでモデル形状を確認。ドラッグで視点回転・ホイールで拡大縮小';
+  $('#scenarioDesc').textContent = SCENARIOS[currentScenario]?.desc || tr('背景なしでモデル形状を確認。ドラッグで視点回転・ホイールで拡大縮小');
   fillSelect($('#engineSelect'), Object.entries(STATE.verbs).map(([v, s]) => [v, s.label]), currentVerb);
 }
 function buildPresets() {
   if (currentScenario === 'modelview') {
-    fillSelect($('#targetSelect'), [['', 'サンプルキューブ'], ...STATE.files.model.map(p => [p, modelLabel(p)])], currentTarget);
+    fillSelect($('#targetSelect'), [['', tr('サンプルキューブ')], ...STATE.files.model.map(p => [p, modelLabel(p)])], currentTarget);
     return;
   }
   const keep = $('#presetSelect').value;
   const paths = scenarioPresets();
   const targets = [...new Set(paths.map(p => presetMeta(p).target).filter(t => t !== '*'))];
-  fillSelect($('#targetSelect'), [['', '手動設定'], ...targets.map(t => [t, t])], currentTarget);
+  fillSelect($('#targetSelect'), [['', tr('手動設定')], ...targets.map(x => [x, tr(x)])], currentTarget);
   currentTarget = $('#targetSelect').value;
   const options = paths.filter(p => {
     const m = presetMeta(p);
     return currentScenario === 'relative' || m.target === '*' || m.target === currentTarget;
   });
-  fillSelect($('#presetSelect'), [['', 'プリセットを選択'], ...options.map(p => [p, (currentScenario === 'relative' ? presetMeta(p).target + ' / ' : '') + presetMeta(p).label])], keep);
+  fillSelect($('#presetSelect'), [['', tr('プリセットを選択')], ...options.map(p => [p, (currentScenario === 'relative' ? tr(presetMeta(p).target) + ' / ' : '') + tr(presetMeta(p).label)])], keep);
   $('#presetSelect').disabled = !options.length;
   $('#loadPresetBtn').disabled = !$('#presetSelect').value;
 }
@@ -1127,7 +1147,7 @@ async function updateObjectViewer() {
     objectViewer.setDisplay(getters.display_mode?.() || 'solid', getters.keep_materials?.() ?? true);
     objectViewer.load(currentTarget);
   } catch (error) {
-    $('#objectStatus').textContent = '3D表示を開始できません: ' + error.message;
+    $('#objectStatus').textContent = tr('3D表示を開始できません') + ': ' + error.message;
   }
 }
 
@@ -1140,7 +1160,7 @@ function syncQuickControls() {
   $('#modelViewTools').hidden = !viewer;
   $('#objectPanel').hidden = !viewer;
   updateObjectViewer();
-  $('#quickSetup label').textContent = viewer ? 'モデル' : 'ターゲット';
+  $('#quickSetup label').textContent = tr(viewer ? 'モデル' : 'ターゲット');
   const g = formValues[currentVerb] || {};
   $('#quickViewLabel').hidden = !g.view_mode;
   if (g.view_mode) $('#quickView').value = g.view_mode() || 'inertial';
@@ -1149,8 +1169,8 @@ function syncQuickControls() {
   $('#groundMethodLabel').hidden = currentScenario !== 'ground';
   $('#groundMethod').value = currentVerb === 'lightcurve' ? 'lightcurve' : 'groundobs';
   $('#engineSelect').value = currentVerb;
-  if (currentVerb !== 'relative') $('#selectionSummary').textContent = viewer ? (currentTarget ? modelLabel(currentTarget) : 'サンプルキューブ') : (currentTarget || '手動設定')
-    + (loadedPresetPath ? ' / ' + presetMeta(loadedPresetPath).label : ' / フォームで編集');
+  if (currentVerb !== 'relative') $('#selectionSummary').textContent = viewer ? (currentTarget ? modelLabel(currentTarget) : tr('サンプルキューブ')) : tr(currentTarget || '手動設定')
+    + ' / ' + (loadedPresetPath ? tr(presetMeta(loadedPresetPath).label) : tr('フォームで編集'));
 }
 function changeEngine(verb) {
   if (verb === currentVerb) return;
@@ -1187,11 +1207,11 @@ function setPresetLoading(loading, previousTarget = currentTarget) {
 }
 async function loadPreset(path, previousTarget = currentTarget) {
   path = path || $('#presetSelect').value;
-  if (!path) { setStatus('プリセットを選択してください'); return; }
+  if (!path) { setStatus(tr('プリセットを選択してください')); return; }
   const meta = presetMeta(path);
   const request = ++presetRequest;
   setPresetLoading(true, previousTarget);
-  setStatus(`${meta.label} を読み込み中…`);
+  setStatus(tr('{name} を読み込み中…', {name: tr(meta.label)}));
   const verb = meta.overlay ? currentVerb : meta.verb || currentVerb;
   try {
     const data = await api(`/api/preset?path=${encodeURIComponent(path)}&verb=${verb}`);
@@ -1216,7 +1236,7 @@ async function loadPreset(path, previousTarget = currentTarget) {
     $('#presetSelect').value = path;
     $('#loadPresetBtn').disabled = false;
     syncQuickControls();
-    setStatus(`${meta.label} を${meta.overlay ? '追加適用しました' : '読み込みました'}`);
+    setStatus(tr(meta.overlay ? '{name} を追加適用しました' : '{name} を読み込みました', {name: tr(meta.label)}));
     liveOnFormRebuilt();
     liveScheduleUpdate(0, false);
   } catch (e) {
@@ -1239,11 +1259,11 @@ function syncRelativeObjects() {
   for (const role of ['chief', 'deputy']) {
     const value = g[role + '_model']?.() || '';
     const paths = [...new Set([...STATE.files.model, ...(value ? [value] : [])])];
-    fillSelect($('#' + role + 'ObjectSelect'), [['', '簡易衛星'], ...paths.map(p => [p, modelLabel(p)])], value);
+    fillSelect($('#' + role + 'ObjectSelect'), [['', tr('簡易衛星')], ...paths.map(p => [p, modelLabel(p)])], value);
   }
   const mode = g.camera_mode?.() || 'manual';
   $('#relativeCameraSelect').value = mode;
-  $('#selectionSummary').textContent = 'chief: ' + (g.chief_model?.() ? modelLabel(g.chief_model()) : '簡易衛星') + ' / deputy: ' + (g.deputy_model?.() ? modelLabel(g.deputy_model()) : '簡易衛星');
+  $('#selectionSummary').textContent = 'chief: ' + (g.chief_model?.() ? modelLabel(g.chief_model()) : tr('簡易衛星')) + ' / deputy: ' + (g.deputy_model?.() ? modelLabel(g.deputy_model()) : tr('簡易衛星'));
   for (const key of ['camera_origin', 'camera_target', 'camera_up']) {
     $('#form [data-key="' + key + '"]')?.querySelectorAll('input').forEach(el => el.disabled = mode !== 'manual');
   }
@@ -1267,7 +1287,7 @@ async function selectRelativeObject(role) {
     }
     loadedPresetPath = '';
     syncQuickControls(); liveOnFormRebuilt(); liveScheduleUpdate(0, false);
-    setStatus(role + ' のモデルを変更しました（スケールは詳細設定で調整できます）');
+    setStatus(tr('{role} のモデルを変更しました（スケールは詳細設定で調整できます）', {role}));
   } catch (e) { setStatus(e.message, true); }
 }
 
@@ -1335,7 +1355,7 @@ async function initMachines() {
   if (!d.machines || d.machines.length <= 1) return;
   const sel = $('#machineSel');
   sel.innerHTML = d.machines.map(m =>
-    `<option value="${m}">${m === 'local' ? 'local（このマシン）' : m}</option>`).join('');
+    `<option value="${m}">${m === 'local' ? tr('local（このマシン）') : m}</option>`).join('');
   sel.value = d.live_machine || 'local';
   $('#machineBar').style.display = 'inline-flex';
   sel.onchange = async () => {
@@ -1346,9 +1366,9 @@ async function initMachines() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ machine }),
       });
-      toast(`実行マシン: ${machine}`);
+      toast(tr('実行マシン: {m}', {m: machine}));
       if (LIVE.on && liveVerbUsable()) liveScheduleUpdate(0);
-    } catch (e) { toast('マシン切替エラー: ' + e.message); }
+    } catch (e) { toast(tr('マシン切替エラー') + ': ' + e.message); }
   };
 }
 
@@ -1365,13 +1385,13 @@ async function startRender(previewMode) {
     }
   }
   try {
-    setStatus('起動中…');
+    setStatus(tr('起動中…'));
     const st = await api('/api/render', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ verb, name: fields.primary_name || verb, fields, yaml_blocks,
                              machine: currentMachine() }),
     });
-    setStatus(`ジョブ ${st.id} を開始（${st.run_dir}）`);
+    setStatus(tr('ジョブ {id} を開始（{dir}）', {id: st.id, dir: st.run_dir}));
     renderJob(st);
     pollJob(st.id);
   } catch (e) { setStatus(e.message, true); }
@@ -1399,6 +1419,7 @@ function renderJob(st) {
       <div class="j-outputs"></div>
       <details><summary class="muted">ログ</summary><pre class="j-log"></pre></details>
     `;
+    I18N.translateDom(el);
     el.querySelector('.j-cancel').onclick = () => cancelJob(st.id);
     const jobs = $('#jobs');
     if (jobs.querySelector('p')) jobs.innerHTML = '';
@@ -1414,7 +1435,7 @@ function renderJob(st) {
   badge.className = 'badge j-badge ' + badgeClass;
   badge.textContent = st.status;
   el.querySelector('.j-frames').textContent =
-    `${st.frames_done}${st.total_frames ? '/' + st.total_frames : ''} フレーム`;
+    tr('{n} フレーム', {n: `${st.frames_done}${st.total_frames ? '/' + st.total_frames : ''}`});
   el.querySelector('.j-cancel').style.display = st.status === 'running' ? '' : 'none';
   el.querySelector('.j-rundir').textContent = st.run_dir;
 
@@ -1492,7 +1513,7 @@ async function showYaml() {
       body: JSON.stringify({ verb: currentVerb, fields, yaml_blocks }),
     });
     $('#yamlText').textContent = data.yaml;
-    $('#cliHint').textContent = `CLI 相当: python mrender.py ${currentVerb} --config <この内容の.yaml>`;
+    $('#cliHint').textContent = tr('CLI 相当: python mrender.py {verb} --config <この内容の.yaml>', {verb: currentVerb});
     $('#yamlDialog').showModal();
   } catch (e) { setStatus(e.message, true); }
 }
@@ -1510,7 +1531,7 @@ async function savePreset(event) {
       body: JSON.stringify({ name, fields, yaml_blocks, gui_meta: metadata }),
     });
     $('#savePresetDialog').close();
-    setStatus(`保存しました: ${data.saved}`);
+    setStatus(tr('保存しました: {path}', {path: data.saved}));
     savedPresetMeta[data.saved] = metadata;
     await refreshPresetList();
     if (scenarioAtSave !== currentScenario) return;
@@ -1528,15 +1549,15 @@ async function loadRuns() {
   try {
     const runs = await api('/api/runs');
     const box = $('#runsList');
-    box.innerHTML = runs.length ? '' : '<p class="muted">まだランがありません。</p>';
+    box.innerHTML = runs.length ? '' : '<p class="muted">' + tr('まだランがありません。') + '</p>';
     for (const r of runs) {
       const d = document.createElement('div');
       d.className = 'run';
       d.innerHTML = `
         ${r.thumb ? `<a href="/api/file?path=${encodeURIComponent(r.thumb)}" target="_blank"><img loading="lazy" src="/api/file?path=${encodeURIComponent(r.thumb)}"></a>` : '<img>'}
         <div class="nm">${r.name}</div>
-        <div class="muted">${r.frame_count} フレーム ${r.status ? '· ' + r.status : ''}</div>
-        ${r.video ? `<a href="/api/file?path=${encodeURIComponent(r.video)}" target="_blank">▶ 動画</a>` : ''}
+        <div class="muted">${tr('{n} フレーム', {n: r.frame_count})} ${r.status ? '· ' + r.status : ''}</div>
+        ${r.video ? `<a href="/api/file?path=${encodeURIComponent(r.video)}" target="_blank">${tr('▶ 動画')}</a>` : ''}
       `;
       box.appendChild(d);
     }
@@ -1897,7 +1918,7 @@ async function liveSendUpdate(interactive) {
       // 致命扱いにはせず、エラーバナーだけ出して UI は生かしておく。
       const fatal = (res.status === 404 || res.status === 501);
       throw Object.assign(
-        new Error(`ライブ更新に失敗しました (verb=${verb}, HTTP ${res.status}): ${detail}`),
+        new Error(tr('ライブ更新に失敗しました (verb={verb}, HTTP {status}): {detail}', {verb, status: res.status, detail})),
         { fatal, tagged: true });
     }
     await res.json().catch(() => ({}));
@@ -1910,8 +1931,8 @@ async function liveSendUpdate(interactive) {
     // 可能性があるので、次に成功するまで表示を差し替えない
     LIVE.stale = true;
     liveSetError(e.fatal
-      ? `${e.message} — ライブプレビュー API が使えません（サーバー側が未対応の可能性）。`
-      : (e.tagged ? e.message : `ライブ更新に失敗しました: ${e.message}`), !!e.fatal);
+      ? e.message + ' — ' + tr('ライブプレビュー API が使えません（サーバー側が未対応の可能性）。')
+      : (e.tagged ? e.message : tr('ライブ更新に失敗しました') + ': ' + e.message), !!e.fatal);
   } finally {
     LIVE.inflight = false;
     if (LIVE.pending) {
@@ -1947,7 +1968,7 @@ async function livePoll() {
       // まだ 1 枚も出来ていない / ワーカー起動中。エラーではないので黙って待つ
       // （エンドポイント自体の有無は /api/live/status で判定する）
     } else if (!res.ok) {
-      liveSetError(`フレーム取得に失敗しました (HTTP ${res.status})`, false);
+      liveSetError(tr('フレーム取得に失敗しました (HTTP {status})', {status: res.status}), false);
     } else {
       const gen = parseInt(res.headers.get('X-Live-Gen') || '0', 10);
       const refined = liveHeaderBool(res.headers.get('X-Live-Refined'));
@@ -1978,8 +1999,8 @@ async function livePoll() {
   } catch (e) {
     LIVE.failures = (LIVE.failures || 0) + 1;
     const dead = LIVE.failures >= 5;   // 落ちているサーバーへの連打を止める
-    liveSetError(`ライブプレビューに接続できません: ${e.message}`
-      + (dead ? '（ポーリングを停止しました）' : ''), dead);
+    liveSetError(tr('ライブプレビューに接続できません') + ': ' + e.message
+      + (dead ? tr('（ポーリングを停止しました）') : ''), dead);
   } finally {
     LIVE.polling = false;
   }
@@ -1990,7 +2011,7 @@ async function livePollStatus() {
     const res = await fetch('/api/live/status', { cache: 'no-store' });
     if (!res.ok) {
       if (res.status === 404) {
-        liveSetError('ライブプレビュー API (/api/live/status) がサーバーにありません。', true);
+        liveSetError(tr('ライブプレビュー API (/api/live/status) がサーバーにありません。'), true);
       }
       return;
     }
@@ -2016,7 +2037,7 @@ async function livePollStatus() {
         && st.gen_rendered === st.gen_requested && !st.rendering) {
       LIVE.pendingRefine = false;
     }
-    if (err) liveSetError(`ワーカーエラー: ${err}`, false);
+    if (err) liveSetError(tr('ワーカーエラー') + ': ' + err, false);
     else liveClearError();
     liveRenderStatus();
   } catch (e) { /* status 取得の失敗は致命でない */ }
@@ -2032,7 +2053,7 @@ function liveApplyHeaderError(raw) {
   if (!raw) { liveClearError(); return; }
   let msg = raw;
   try { msg = decodeURIComponent(raw); } catch (e) { /* そのまま */ }
-  liveSetError(`ワーカーエラー: ${msg}`, false);
+  liveSetError(tr('ワーカーエラー') + ': ' + msg, false);
 }
 
 /* --- ステータス行・オーバーレイ --- */
@@ -2042,13 +2063,13 @@ function liveRenderStatus() {
   const parts = [];
   parts.push(`gen ${LIVE.gen < 0 ? '—' : LIVE.gen}`);
   parts.push(LIVE.lastMs != null ? `${Math.round(LIVE.lastMs)} ms` : '— ms');
-  const statusLabel = LIVE.lastStatus === 'rendering' ? '<span class="st-run">レンダ中</span>'
-    : LIVE.lastStatus === 'error' ? '<span class="st-err">エラー</span>'
-    : LIVE.lastStatus === 'idle' ? '<span class="st-ok">待機</span>' : '—';
+  const statusLabel = LIVE.lastStatus === 'rendering' ? `<span class="st-run">${tr('レンダ中')}</span>`
+    : LIVE.lastStatus === 'error' ? `<span class="st-err">${tr('エラー')}</span>`
+    : LIVE.lastStatus === 'idle' ? `<span class="st-ok">${tr('待機')}</span>` : '—';
   parts.push(statusLabel);
   // refined / 簡易 / preview は排他（簡易化描画はリファイン済みには成り得ない）
   parts.push(LIVE.refined ? '<span class="st-ok">refined</span>'
-    : LIVE.simplified ? '<span class="st-simp" title="操作中の簡易化描画（大気/雲/夜光/星空オフ・低バウンス）">簡易</span>'
+    : LIVE.simplified ? `<span class="st-simp" title="${tr('操作中の簡易化描画（大気/雲/夜光/星空オフ・低バウンス）')}">${tr('簡易')}</span>`
     : '<span class="muted">preview</span>');
   parts.push(`${Math.round(q.scale * 100)}% / ${q.spp} spp` + (q.refine ? ` → ${q.refine_spp} spp` : ''));
   $('#liveStatus').innerHTML = parts.join('<span class="muted">·</span>');
@@ -2056,8 +2077,8 @@ function liveRenderStatus() {
   const overlay = $('#liveOverlay');
   if (LIVE.gen < 0 && !LIVE.lastError) {
     overlay.style.display = '';
-    overlay.textContent = `${currentVerb} のシーンを準備中…`
-      + '（初回は Mitsuba の読み込みで 20 秒ほどかかることがあります）';
+    overlay.textContent = tr('{verb} のシーンを準備中…', {verb: currentVerb})
+      + tr('（初回は Mitsuba の読み込みで 20 秒ほどかかることがあります）');
   } else {
     overlay.style.display = 'none';
   }
@@ -2165,10 +2186,10 @@ function liveSyncSunAngle() {
   const rotating = liveSunRotating();
   slider.disabled = rotating;
   slider.title = rotating
-    ? '「太陽を回す」が ON のため無効です（フレームごとに自動回転します）' : '';
+    ? tr('「太陽を回す」が ON のため無効です（フレームごとに自動回転します）') : '';
   if (!auto) slider.value = String(Math.round(Number(raw)));
-  $('#liveSunAngleLabel').textContent = rotating ? '自動回転'
-    : (auto ? '自動' : `${Math.round(Number(slider.value))}°`);
+  $('#liveSunAngleLabel').textContent = rotating ? tr('自動回転')
+    : (auto ? tr('自動') : `${Math.round(Number(slider.value))}°`);
   const autoBtn = $('#liveSunAngleAuto');
   autoBtn.style.display = (!auto && !rotating) ? '' : 'none';
 }
@@ -2228,7 +2249,7 @@ function liveEnsureCamOverride() {
   const target = liveWorkerCamVec('target');
   const up = liveWorkerCamVec('up');
   if ((needOrigin && !origin) || (needTarget && !target)) {
-    liveSetCamHint('カメラ情報の取得待ちです（最初のライブ描画が出てから操作してください）');
+    liveSetCamHint(tr('カメラ情報の取得待ちです（最初のライブ描画が出てから操作してください）'));
     return false;
   }
   if (needOrigin) liveSetVec('camera_origin', origin);
@@ -2265,7 +2286,7 @@ function liveRenderCamHint() {
     el.textContent = LIVE.camWarn;
     el.style.color = 'var(--warn)';
   } else if (liveIsCamOverrideVerb() && liveVerbUsable() && !liveHasCamOverride()) {
-    el.textContent = currentVerb === 'modelview' ? 'モデルは静止しています。ドラッグで視点を回せます。' : 'カメラ = view_mode 既定（ドラッグすると上書きを開始します）';
+    el.textContent = tr(currentVerb === 'modelview' ? 'モデルは静止しています。ドラッグで視点を回せます。' : 'カメラ = view_mode 既定（ドラッグすると上書きを開始します）');
     el.style.color = 'var(--dim)';
   } else {
     el.textContent = '';
@@ -2278,7 +2299,7 @@ function liveUpdateCamHint() {
   const show = liveIsCamOverrideVerb() && liveVerbUsable();
   const has = show && liveHasCamOverride();
   btn.style.display = show ? '' : 'none';
-  btn.textContent = currentVerb === 'modelview' ? '全体を表示' : 'カメラ上書き解除';
+  btn.textContent = tr(currentVerb === 'modelview' ? '全体を表示' : 'カメラ上書き解除');
   btn.disabled = show && !has;
   btn.classList.toggle('on', has);
   if (!liveIsCamOverrideVerb()) LIVE.camWarn = '';
@@ -2288,11 +2309,11 @@ function liveUpdateCamHint() {
 /* --- ビューポート操作（Blender/Unity 風） --- */
 function liveStaticCamGuard() {
   if (currentVerb === 'relative' && (liveGetters().camera_mode?.() || 'manual') !== 'manual') {
-    liveSetCamHint('機載カメラは選択した機体・視点に固定されています。マウスで動かすには外部カメラを選択してください。');
+    liveSetCamHint(tr('機載カメラは選択した機体・視点に固定されています。マウスで動かすには外部カメラを選択してください。'));
     return true;
   }
   if (!LIVE_STATIC_CAMERA_VERBS.has(currentVerb)) return false;
-  liveSetCamHint('この verb のカメラは観測幾何から自動決定されます（ビューポート操作は無効）');
+  liveSetCamHint(tr('この verb のカメラは観測幾何から自動決定されます（ビューポート操作は無効）'));
   return true;
 }
 
@@ -2445,10 +2466,10 @@ function updateLivePanel() {
   panel.style.display = usable ? '' : 'none';
   if (!usable) { liveStopPolling(); return; }
   const schema = STATE.verbs[currentVerb];
-  $('#liveVerbLabel').textContent = `— ${SCENARIOS[currentScenario]?.label || 'モデル確認'}`;
+  $('#liveVerbLabel').textContent = `— ${SCENARIOS[currentScenario]?.label || tr('モデル確認')}`;
   $('#liveVerbNote').style.display = LIVE_NOTE_VERBS[currentVerb] ? '' : 'none';
   $('#liveBody').style.display = LIVE.on ? '' : 'none';
-  $('#liveToggle').textContent = LIVE.on ? 'ライブプレビュー OFF' : 'ライブプレビュー ON';
+  $('#liveToggle').textContent = tr(LIVE.on ? 'ライブプレビュー OFF' : 'ライブプレビュー ON');
   $('#liveToggle').classList.toggle('on', LIVE.on);
   liveUpdateCamHint();
   if (LIVE.on) { liveStartPolling(); liveRenderStatus(); } else { liveStopPolling(); }
@@ -2474,10 +2495,10 @@ async function liveStopWorker() {
     LIVE.gen = -1; LIVE.refined = false; LIVE.pendingRefine = false;
     LIVE.simplified = false;
     LIVE.lastStatus = ''; LIVE.lastMs = null; LIVE.started = false;
-    setStatus('ライブプレビューのワーカーを停止しました');
+    setStatus(tr('ライブプレビューのワーカーを停止しました'));
     liveRenderStatus();
   } catch (e) {
-    liveSetError(`ワーカー停止に失敗しました: ${e.message}`, false);
+    liveSetError(tr('ワーカー停止に失敗しました') + ': ' + e.message, false);
   }
 }
 
@@ -2665,12 +2686,12 @@ function aiSyncRunIndicator() {
     const t = document.createElement('span'); t.className = 'ai-run-t'; d.appendChild(t);
     const s = document.createElement('span'); s.className = 'ai-run-s'; d.appendChild(s);
     const x = document.createElement('button');
-    x.className = 'ai-run-x'; x.textContent = '⏹ 停止'; x.title = '実行を停止';
+    x.className = 'ai-run-x'; x.textContent = tr('⏹ 停止'); x.title = tr('実行を停止');
     x.onclick = aiStop;
     d.appendChild(x);
   }
   log.appendChild(d);   // 常に末尾へ
-  d.querySelector('.ai-run-t').textContent = AI.stat || '処理中…';
+  d.querySelector('.ai-run-t').textContent = AI.stat || tr('処理中…');
   d.querySelector('.ai-run-s').textContent = AI.t0 ? Math.max(0, Math.round((Date.now() - AI.t0) / 1000)) + 's' : '';
   log.scrollTop = log.scrollHeight;
 }
@@ -2714,9 +2735,9 @@ function aiToolLine(b) {
   if (n === 'Bash') return '$ ' + String(i.command || '').split('\n')[0].slice(0, 90);
   if (n === 'Grep') return 'grep ' + (i.pattern || '');
   if (n === 'Glob') return 'glob ' + (i.pattern || '');
-  if (n === 'WebSearch') return 'web 検索: ' + (i.query || '');
+  if (n === 'WebSearch') return tr('web 検索') + ': ' + (i.query || '');
   if (n === 'WebFetch') return 'web ' + (i.url || '');
-  if (n === 'TodoWrite') return 'todo 更新';
+  if (n === 'TodoWrite') return tr('todo 更新');
   if (n.indexOf('mcp__') === 0) return 'mcp ' + n.replace(/^mcp__/, '').replace(/__/g, ' · ');
   return n;
 }
@@ -2727,19 +2748,19 @@ function aiHandleEvent(s) {
   try { ev = JSON.parse(s); } catch (e) { return; }
   if (ev.type === 'run_started') {
     AI.runId = ev.run_id || null;
-    aiSetStat((ev.engine || 'agent') + ' 起動中…');
+    aiSetStat((ev.engine || 'agent') + ' ' + tr('起動中…'));
     aiUpdateUi();
   } else if (ev.type === 'system' && ev.subtype === 'init') {
     AI.sess = ev.session_id || AI.sess;
     aiStore();
-    aiSetStat('応答を待機中…');
+    aiSetStat(tr('応答を待機中…'));
     aiUpdateUi();
   } else if (ev.type === 'system' && ev.subtype === 'thinking_tokens') {
-    aiSetStat('思考中…' + (ev.estimated_tokens != null ? ' (' + ev.estimated_tokens + ' tok)' : ''));
+    aiSetStat(tr('思考中…') + (ev.estimated_tokens != null ? ' (' + ev.estimated_tokens + ' tok)' : ''));
   } else if (ev.type === 'assistant') {
     for (const blk of (ev.message && ev.message.content) || []) {
       if (blk.type === 'text' && blk.text && blk.text.trim()) {
-        aiAppend('md', blk.text); aiSetStat('処理中…');
+        aiAppend('md', blk.text); aiSetStat(tr('処理中…'));
       } else if (blk.type === 'tool_use') {
         const line = aiToolLine(blk);
         aiAppend('tool', line); aiSetStat(line);
@@ -2749,7 +2770,7 @@ function aiHandleEvent(s) {
     const dur = Math.round((ev.duration_ms || 0) / 1000);
     const cost = ev.total_cost_usd != null ? ' · $' + (+ev.total_cost_usd).toFixed(3) : '';
     if (ev.is_error) aiAppend('err', '✗ ' + String(ev.result || ev.subtype || 'error').slice(0, 600));
-    else aiAppend('info', '✓ 完了 (' + dur + 's' + cost + ')');
+    else aiAppend('info', tr('✓ 完了') + ' (' + dur + 's' + cost + ')');
   } else if (ev.type === 'error') {
     aiAppend('err', 'exit ' + ev.exit + (ev.stderr ? '\n' + String(ev.stderr).slice(0, 400) : ''));
   } else if (ev.type === 'done') {
@@ -2771,7 +2792,7 @@ async function aiOnEditedFiles(files) {
   }
   if (!presets.length) return;
   try { await refreshPresetList(); } catch (e) { /* 一覧更新の失敗は致命でない */ }
-  toast('AI がプリセットを更新: ' + presets.map(p => p.split('/').pop()).join(', '));
+  toast(tr('AI がプリセットを更新') + ': ' + presets.map(p => p.split('/').pop()).join(', '));
   // 現在フォームに載っているプリセットが編集されたら読み直す
   //（→ 既存の liveOnFormRebuilt / liveScheduleUpdate がライブプレビューを更新する）
   if (loadedPresetPath && presets.indexOf(loadedPresetPath) >= 0) {
@@ -2782,7 +2803,7 @@ async function aiOnEditedFiles(files) {
 /* ---- 送信 / 停止 ---- */
 async function aiSend() {
   if (AI.disabled) return;
-  if (AI.running) { toast('実行中です — 完了を待って再送信してください'); return; }
+  if (AI.running) { toast(tr('実行中です — 完了を待って再送信してください')); return; }
   const t = $('#aiText').value.trim();
   if (!t) return;
 
@@ -2799,9 +2820,9 @@ async function aiSend() {
     } catch (e) { guiContext = undefined; }
   }
 
-  aiAppend('user', t + (guiContext ? '\n[gui] ' + currentVerb + ' の現在設定を添付' : ''));
+  aiAppend('user', t + (guiContext ? '\n[gui] ' + tr('{verb} の現在設定を添付', {verb: currentVerb}) : ''));
   $('#aiText').value = '';
-  AI.running = true; AI.runId = null; AI.t0 = Date.now(); AI.stat = '接続中…';
+  AI.running = true; AI.runId = null; AI.t0 = Date.now(); AI.stat = tr('接続中…');
   aiSetBanner('');
   aiUpdateUi();
   clearInterval(AI.tickTimer);
@@ -2819,19 +2840,19 @@ async function aiSend() {
     });
     if (res.status === 404) {
       AI.disabled = true;
-      aiSetBanner('このサーバでは AI アシスタントが無効です（localhost バインド時のみ利用できます）。');
+      aiSetBanner(tr('このサーバでは AI アシスタントが無効です（localhost バインド時のみ利用できます）。'));
       return;
     }
     if (res.status === 409) {
       const j = await res.json().catch(() => ({}));
       aiAppend('err', j.error === 'session_busy'
-        ? 'このセッションは別タブ / 別クライアントで実行中です'
-        : '別の実行が進行中です — 完了を待って再送信してください');
+        ? tr('このセッションは別タブ / 別クライアントで実行中です')
+        : tr('別の実行が進行中です — 完了を待って再送信してください'));
       return;
     }
     if (!res.ok || !res.body) {
       const j = await res.json().catch(() => ({}));
-      aiSetBanner('AI エラー ' + res.status + (j.error ? ': ' + j.error : ''));
+      aiSetBanner(tr('AI エラー') + ' ' + res.status + (j.error ? ': ' + j.error : ''));
       return;
     }
     const reader = res.body.getReader(), dec = new TextDecoder();
@@ -2849,7 +2870,7 @@ async function aiSend() {
       }
     }
   } catch (e) {
-    aiSetBanner('接続エラー: ' + e.message);
+    aiSetBanner(tr('接続エラー') + ': ' + e.message);
   } finally {
     clearInterval(AI.tickTimer); AI.tickTimer = null;
     AI.running = false; AI.runId = null; AI.t0 = 0; AI.stat = '';
@@ -2858,15 +2879,15 @@ async function aiSend() {
 }
 function aiStop() {
   if (!AI.running) return;
-  if (!AI.runId) { toast('開始直後です — 数秒待ってからもう一度'); return; }
+  if (!AI.runId) { toast(tr('開始直後です — 数秒待ってからもう一度')); return; }
   fetch('/api/ai/stop', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ run_id: AI.runId }),
   }).catch(() => {});
-  aiSetStat('停止要求を送信…');
+  aiSetStat(tr('停止要求を送信…'));
 }
 function aiNewConv() {
-  if (AI.running) { toast('実行中です — 停止してから新規会話にしてください'); return; }
+  if (AI.running) { toast(tr('実行中です — 停止してから新規会話にしてください')); return; }
   AI.sess = ''; AI.hist = []; AI.runId = null; AI.stat = '';
   aiStore();
   aiSetBanner('');
@@ -2898,14 +2919,14 @@ async function aiInit() {
     const res = await fetch('/api/ai/defaults');
     if (res.status === 404) {
       AI.disabled = true;
-      aiSetBanner('このサーバでは AI アシスタントが無効です（localhost バインド時のみ利用できます）。');
+      aiSetBanner(tr('このサーバでは AI アシスタントが無効です（localhost バインド時のみ利用できます）。'));
       aiUpdateUi();
       return;
     }
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const d = await res.json();
-    if (d.model) $('#aiModel').options[0].textContent = 'デフォルト (' + d.model + ')';
-    if (d.effort) $('#aiEffort').options[0].textContent = 'デフォルト (' + d.effort + ')';
+    if (d.model) $('#aiModel').options[0].textContent = tr('デフォルト') + ' (' + d.model + ')';
+    if (d.effort) $('#aiEffort').options[0].textContent = tr('デフォルト') + ' (' + d.effort + ')';
     if (d.grok_available === false) {
       const g = $('#aiModelGrok');
       if (g) g.remove();
@@ -2913,11 +2934,11 @@ async function aiInit() {
     }
     if (d.claude_available === false && d.grok_available === false) {
       AI.disabled = true;
-      aiSetBanner('AI CLI（claude / grok）が見つかりません。インストール後にサーバを再起動してください。');
+      aiSetBanner(tr('AI CLI（claude / grok）が見つかりません。インストール後にサーバを再起動してください。'));
     }
   } catch (e) {
     AI.disabled = true;
-    aiSetBanner('AI アシスタントに接続できません（' + e.message + '）。GUI の他の機能はそのまま使えます。');
+    aiSetBanner(tr('AI アシスタントに接続できません（{err}）。GUI の他の機能はそのまま使えます。', {err: e.message}));
   }
   aiUpdateUi();
 }
@@ -2933,7 +2954,7 @@ async function refreshJobs() {
 }
 
 async function init() {
-  STATE = await api('/api/state');
+  STATE = I18N.translateSchema(await api('/api/state'));
   currentVerb = SCENARIOS[currentScenario]?.verb || 'modelview';
   buildTabs();
   buildPresets();
@@ -2959,7 +2980,7 @@ async function init() {
   initMachines().catch(() => {});   // リモート定義が無ければ黙って非表示
   aiInit().catch(() => {});   // AI drawer は失敗しても GUI 本体に影響させない
 }
-init().catch(e => setStatus('初期化エラー: ' + e.message, true));
+init().catch(e => setStatus(tr('初期化エラー') + ': ' + e.message, true));
 
 /* --- サイドバー幅のドラッグリサイズ（localStorage 永続化） --- */
 (() => {

@@ -1929,13 +1929,14 @@ class _ReuseAddrServer(ThreadingHTTPServer):
 
 
 def main(argv: Optional[List[str]] = None) -> None:
+    from cli_i18n import localize_parser
     parser = argparse.ArgumentParser(description='mrender GUI サーバー')
-    parser.add_argument('--port', type=int, default=8600)
-    parser.add_argument('--host', type=str, default='127.0.0.1')
-    parser.add_argument('--no-browser', action='store_true', default=False)
+    parser.add_argument('--port', type=int, default=8600, help='HTTP ポート')
+    parser.add_argument('--host', type=str, default='127.0.0.1', help='バインドするアドレス')
+    parser.add_argument('--no-browser', action='store_true', default=False, help='起動時にブラウザを開かない')
     parser.add_argument('--live-port', type=int, default=None,
                         help='ライブプレビュー ワーカーのポート（既定: --port + 1）')
-    args = parser.parse_args(argv)
+    args = localize_parser(parser).parse_args(argv)
 
     LIVE['host'] = args.host
     LIVE['port'] = args.live_port or (args.port + 1)

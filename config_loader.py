@@ -21,6 +21,8 @@ Mitsuba には触れない。シーン辞書の組み立ては scene_builder.py 
 """
 
 import argparse
+
+from cli_i18n import localize_parser
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -337,7 +339,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--config', nargs='+', default=[],
                         help='YAMLプリセット（複数指定可、後のファイルが優先）')
     parser.set_defaults(**_ARG_DEFAULTS)
-    return parser
+    return localize_parser(parser)
 
 
 def orbit_settings_from_mapping(source: Dict[str, Any], fallback: OrbitSettings) -> OrbitSettings:

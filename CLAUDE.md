@@ -52,6 +52,18 @@ GUI サーバーは Mitsuba を import しない軽量設計。relative/rotation
 （旧ハードコード辞書は廃止済み）。プリセットのフォーム未対応キーは
 extraKeys 機構でそのまま透過適用される（フォーム下部に一覧表示）。
 
+**表示言語（日本語 / 英語）**: ブラウザ（= OS）の言語が日本語以外なら GUI は英語表示になる
+（`navigator.language`。ヘッダーの「言語」セレクタ = auto / 日本語 / English で上書き、
+localStorage `mrender.lang`、`?lang=en` でも指定可。切替はリロード）。実装は
+`gui/i18n.js`: ソースの文言は日本語のまま、辞書「日本語原文 → 英語」で表示時に置換する
+（静的 HTML は `I18N.translateDom`、JS 生成文言は `tr('原文', {vars})`、gui_server が返す
+フォームスキーマの label/help/title/desc は `I18N.translateSchema` で /api/state 受信直後に
+置換。ターゲット名・プリセットラベル等の内部状態と YAML ヘッダは日本語の正準形のまま）。
+**ユーザー向け文言は必ず日本語・英語の両対応にする（2026-10-07 方針）**: 新しい文言を
+追加したら辞書にも英訳を追加すること。`tests/test_gui_i18n.py`（要 node）が
+スキーマ・静的 HTML・`tr()` 引数・サーバーエラー文言のカバレッジを検査する。CLI の
+argparse ヘルプも同方式で英語化する（下記「CLI ヘルプの表示言語」）。
+
 **ライブプレビュー（全 verb 対応。groundobs は画像のみ・カメラ操作無効）**: 右カラムの「ライブプレビュー ON」で
 Blender のレンダープレビュー風のビューポートが使える。
 Mitsuba 常駐の `live_worker.py` を gui_server が遅延 spawn（既定ポート =
@@ -101,6 +113,17 @@ claude は `--permission-mode acceptEdits`（全許可フラグは不使用）�
 AI が presets/*.yaml を編集すると done イベントの edited_files 経由で GUI が
 プリセット一覧を更新し、読み込み中プリセットなら自動再読込→ライブプレビュー反映。
 「現在の GUI 設定を渡す」ON で現在フォームの YAML が文脈として注入される。
+
+### CLI ヘルプの表示言語（日本語 / 英語）
+
+argparse の description / epilog / help は日本語で書き、`cli_i18n.py`（標準ライブラリのみ）の
+辞書「日本語原文 → 英語」で表示時に置換する。各 `build_*_parser()`（verb_parsers /
+config_loader）と `gui_server.main` は末尾で `localize_parser(parser)` を通す。言語は
+`MRENDER_LANG=ja|en` > `LC_ALL` > `LC_MESSAGES` > `LANG` > `locale.getlocale()`（ja* なら
+日本語、C/POSIX/未設定を含むそれ以外は英語）。`mrender.py` の usage も `tr()` 経由。
+**ヘルプ文言を追加・変更したら `cli_i18n.DICT` にも英訳を追加する**（`%(default)s` 等の
+書式は英訳側にも同じまま）。`tests/test_cli_i18n.py` が全パーサのカバレッジと
+「英語モードで日本語が残らない」ことを検査する。ログ・例外メッセージは対象外。
 
 ### 実行（mrender.py: 統合 CLI）
 

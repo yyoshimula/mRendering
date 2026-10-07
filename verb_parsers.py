@@ -18,6 +18,8 @@ from __future__ import annotations
 import argparse
 from typing import Any, Dict, Iterable
 
+from cli_i18n import localize_parser  # 標準ライブラリのみ（ヘルプ文言の日本語→英語置換）
+
 # GUI フォームには出さない dest。
 #   config     : プリセット読込は GUI の別 UI が担当する
 #   output_dir : ラン開始時に gui_server が決める
@@ -318,7 +320,7 @@ def build_relative_parser() -> argparse.ArgumentParser:
                         help='機体軸を描画する（既定: 有効）')
     parser.add_argument('--no-body-axes', dest='show_body_axes', action='store_false')
 
-    return parser
+    return localize_parser(parser)
 
 
 def build_groundobs_parser() -> argparse.ArgumentParser:
@@ -510,7 +512,7 @@ def build_groundobs_parser() -> argparse.ArgumentParser:
     parser.add_argument('--video-name', type=str, default='output.mp4',
                         help='動画ファイル名（run ディレクトリ直下に出力）')
 
-    return parser
+    return localize_parser(parser)
 
 
 def build_rotation_parser() -> argparse.ArgumentParser:
@@ -575,4 +577,4 @@ def build_rotation_parser() -> argparse.ArgumentParser:
     parser.add_argument('--output-dir', type=str, default=None,
                         help='出力ディレクトリ（未指定時は output/simple）')
 
-    return parser
+    return localize_parser(parser)

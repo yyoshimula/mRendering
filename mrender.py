@@ -31,13 +31,15 @@ VERBS = ('render', 'lightcurve', 'preview', 'rotation', 'relative', 'onboard',
 
 def _print_usage(stream=sys.stderr) -> None:
     """簡易 usage を表示する。`--help` / 未知 verb / 引数なし時に呼ばれる。"""
+    from cli_i18n import tr
     print(
         "usage: mrender <verb> [verb args]\n"
         "  verbs: " + ', '.join(VERBS) + "\n"
-        "  例: python mrender.py render --config presets/iss.yaml\n"
-        "      python mrender.py lightcurve --config presets/iss.yaml\n"
+        + tr("  例: python mrender.py render --config presets/iss.yaml\n")
+        + "      python mrender.py lightcurve --config presets/iss.yaml\n"
         "      python mrender.py preview --config presets/iss.yaml presets/earth_beauty.yaml"
-        "  # 後勝ちで差分 YAML を重ねる\n"
+        + tr("  # 後勝ちで差分 YAML を重ねる\n")
+        +
         "      python mrender.py rotation --config presets/rotation_hubble.yaml\n"
         "      python mrender.py relative --config presets/relative_static.yaml\n"
         "      python mrender.py groundobs --config presets/groundobs_hubble.yaml",
@@ -89,7 +91,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         return
     verb, *rest = argv
     if verb not in VERBS:
-        print(f"mrender: 未対応のサブコマンド: {verb}", file=sys.stderr)
+        from cli_i18n import tr
+        print(f"mrender: {tr('未対応のサブコマンド')}: {verb}", file=sys.stderr)
         _print_usage()
         raise SystemExit(2)
     _dispatch(verb, rest)

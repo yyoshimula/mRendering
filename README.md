@@ -1,5 +1,7 @@
 # 人工衛星軌道レンダリング（物理ベース）- 高度な光学シミュレータ
 
+日本語 | [English README](README.en.md)
+
 Mitsuba 3を使用して、ケプラー軌道要素に基づいた物理的に正確な人工衛星のレンダリングを行うプロジェクトです。
 
 ## 主な機能
@@ -75,6 +77,17 @@ source venv/bin/activate
 ```bash
 pip install -r requirements.txt
 ```
+
+## 表示言語（日本語 / 英語）
+
+GUI と CLI ヘルプはシステム言語に追従します。日本語以外はすべて英語表示です。
+
+- **GUI**: ブラウザの言語（`navigator.language`）で判定。ヘッダーの「言語」セレクタ
+  （自動 / 日本語 / English、ブラウザに記憶）か URL の `?lang=en` / `?lang=ja` で上書きできます。
+- **CLI ヘルプ**（`python mrender.py <verb> --help`）: ロケール（`LC_ALL` > `LC_MESSAGES` > `LANG`）で判定。
+  `MRENDER_LANG=en` / `MRENDER_LANG=ja` で強制できます。
+- ソースの文言は日本語で、英語は辞書（`gui/i18n.js`、`cli_i18n.py`）による置換です。
+  ログ出力・例外メッセージは翻訳対象外です。
 
 ## GUI（ブラウザ操作）
 
